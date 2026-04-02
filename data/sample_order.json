@@ -1,0 +1,21 @@
+{
+  "warehouse_id": 1,
+  "warehouse_name": "望京前置仓01",
+  "platform_order_id": "2058",
+  "platform": "meituan",
+  "rider_phone": "13912345678",
+  "items": [
+    {
+      "sku": "YL-CM-250ML-24",
+      "name": "伊利纯牛奶250ml×24盒",
+      "quantity": 1,
+      "image_url": ""
+    },
+    {
+      "sku": "WD-ZJ-3P",
+      "name": "维达纸巾3包装",
+      "quantity": 1,
+      "image_url": ""
+    }
+  ]
+}

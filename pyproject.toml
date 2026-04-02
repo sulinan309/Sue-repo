@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "watchbot"
+version = "1.0.0"
+description = "AI Guard System for Unmanned Warehouses - 摄像头看 + 电话说"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["watchbot/tests"]
+asyncio_mode = "auto"
+
+[tool.setuptools.packages.find]
+include = ["watchbot*"]
