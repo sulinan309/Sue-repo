@@ -13,4 +13,5 @@ AI 攀岩搭子产品的领域知识底座，对应《AI 攀岩搭子｜MVP 产�
 cd climbing-kb
 python3 tools/validate.py    # 校验结构完整性
 python3 tools/query.py 脚滑   # 按用户的一句话检索
+python3 climbing-kb/tools/perception_audit.py   # 感知能力需求审计
 ```

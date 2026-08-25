@@ -1,0 +1,120 @@
+# 知识库 observables × 感知能力需求映射
+#
+# 知识库里每个单元的 observables 字段写的是「从普通单机位手机视频能看见什么」。
+# 那正是感知层的需求清单——不是我们想让模型做什么，是知识库已经要求它做什么。
+#
+# 本文件把 122 条 observables 逐条归到能力档位，用来回答三个问题：
+#   1. 哪些反馈现在就能做（单流够用）
+#   2. 哪些必须等双流融合
+#   3. 哪些必须等墙体坐标系
+#
+# map 的每个数组按该单元 observables 的顺序一一对应。
+# tools/perception_audit.py 会校验数组长度与知识库一致——
+# 知识库加了一条 observable 而这里没跟上，审计会报错。
+
+tiers:
+  P0:
+    name: 姿态流·2D
+    needs: 2D 人体关键点 + 时序
+    maturity: 现成模型可用
+    note: >
+      只涉及身体自身的构型和先后顺序，不需要知道场景里有什么。
+      这一档是 MVP 第一批反馈的可行区间。
+
+  P1:
+    name: 姿态流·3D（相机坐标）
+    needs: 单目 3D 姿态，关节角度与三维速度
+    maturity: 较成熟，攀岩的离地和遮挡是已知难点
+    note: >
+      需要三维构型才能可靠判断的量：骨盆旋转、关节角度、身体绕轴旋转。
+      2D 骨架在这些量上会因为投影歧义给出错误结论。
+
+  P2:
+    name: 视觉流·场景级
+    needs: 场景分类与粗粒度检测
+    maturity: 现成模型可用
+    note: 不涉及身体与岩点的精细关系，只需要判断画面里在发生什么。
+
+  P3:
+    name: 双流融合·接触判定
+    needs: 姿态定位接触区域 → 视觉在该区域做精细判断 → 融合
+    maturity: 需要自建，是 PAVI-Net 类架构的核心适用场景
+    note: >
+      「手到底碰了哪个岩点」「鞋踩在有效受力面还是边缘」这类问题，
+      纯姿态给不出（不知道岩点在哪），纯 RGB 也不稳（岩墙背景杂乱、
+      岩点颜色与身体易混）。姿态提供空间先验，把视觉注意力引导到
+      接触区域——这是双流架构在攀岩上最硬的理由。
+
+  P4:
+    name: 墙体坐标系·度量 3D
+    needs: 稳定的墙面几何 + 人体全局轨迹，两者在同一坐标系
+    maturity: 未解决，ClimbingCap 用 LiDAR 做到高精度版本
+    note: >
+      「髋部与墙面的距离」「重心是否在脚的正上方」这类量，本质上是
+      人体与墙面在同一度量坐标系里的关系。没有墙体坐标系就只能给
+      定性描述，不能给方向性判断。这是我们最大的单点技术缺口。
+
+  PX-AUDIO:
+    name: 音频流
+    needs: 音频事件检测
+    maturity: 现成模型可用，成本极低
+    note: >
+      知识库里只有一条，但它是「静音脚」任务的完成证据。
+      纯音频信号，两个视觉流都覆盖不到，实现成本却几乎为零。
+
+  PX-OUT:
+    name: 视频给不出
+    needs: 用户自述或现场确认
+    maturity: 不适用
+    note: 鞋底磨损、岩点表面状态、主观疲劳感。产品应当直接问，不应当猜。
+
+# 跨视频标记：需要把同一线路的多次尝试对齐才能得到的量。
+# 它们额外依赖线路识别，不只依赖感知能力。
+cross_video:
+  - [FAULT-NO-PLAN-014, 2]
+  - [TEC-PER-READ-001, 3]
+
+# 高难度标记：归在该档位，但即使该档位能力就绪，这一条仍然偏难。
+# 产品排期时应当放在同档位的最后。
+hard:
+  - [PRIN-CONTACT-001, 2]
+  - [PRIN-CONTACT-001, 3]
+  - [TEC-CON-LOAD-002, 0]
+  - [TEC-MOV-DROPKNEE-003, 2]
+  - [FAULT-FOOT-CUT-003, 3]
+  - [TEC-CON-FOOT-001, 2]
+
+map:
+  FAULT-BARNDOOR-016:      [P1, P3, P3, P3]
+  FAULT-DYNO-CATCH-009:    [P3, P3, P1, P1]
+  FAULT-FOOT-CUT-003:      [P3, P4, P4, P3]
+  FAULT-FOOT-READJUST-002: [P3, P1, P4]
+  FAULT-FOOT-SLIP-001:     [P3, P3, P4, P4]
+  FAULT-HESITATE-013:      [P0, P1, P0, P0]
+  FAULT-HIP-SAG-004:       [P4, P1, P0, P3]
+  FAULT-LIMP-FLAG-007:     [P0, P1, P1, P3]
+  FAULT-NO-PLAN-014:       [P2, P0, P3, P3]
+  FAULT-PULL-FIRST-011:    [P0, P1, P0, P1]
+  FAULT-REACH-FIRST-005:   [P0, P0, P0, P1]
+  FAULT-ROCKOVER-STALL-010: [P4, P1, P0, P1]
+  FAULT-SQUARE-REACH-008:  [P4, P4, P0, P3]
+  FAULT-STUCK-TRAVERSE-006: [P1, P3, P3]
+  FAULT-SWING-012:         [P1, P3, P3, P4]
+  FAULT-WRONG-HAND-015:    [P3, P3, P0, P0]
+
+  PRIN-COM-003:            [P1, P0, P4, P4]
+  PRIN-CONTACT-001:        [P3, P3, P3, P3]
+  PRIN-LEGS-004:           [P1, P0, P0, P1]
+  PRIN-SPEED-005:          [P0, P3, P0, P0]
+  PRIN-STABLE-002:         [P3, P3, P0, P4]
+
+  TEC-CON-FOOT-001:        [P3, PX-AUDIO, P1, P3]
+  TEC-CON-LOAD-002:        [P3, P4, P4, P3]
+  TEC-MOV-DROPKNEE-003:    [P1, P4, P3, P0]
+  TEC-MOV-FLAG-001:        [P0, P3, P1, P1]
+  TEC-MOV-ROCKOVER-002:    [P4, P0, P1, P1]
+  TEC-PER-READ-001:        [P2, P0, P3, P3]
+  TEC-POS-COM-001:         [P0, P0, P4, P1]
+  TEC-POS-ORIENT-002:      [P1, P4, P0, P3]
+  TEC-POS-TENSION-003:     [P3, P4, P1, P1]
+  TEC-STR-SPEED-001:       [P0, P0, P3, P1]

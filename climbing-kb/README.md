@@ -33,6 +33,7 @@ pip install pyyaml
 python3 tools/validate.py    # 校验结构完整性（每次提交前跑）
 python3 tools/build.py       # 编译成 dist/kb.json 供检索
 python3 tools/query.py 脚滑   # 按用户的一句话检索
+python3 tools/perception_audit.py   # 审计知识库对感知能力的需求
 ```
 
 看一条完整的解题链——这是产品给建议时实际走的路径：
@@ -91,6 +92,7 @@ python3 tools/query.py --chain FAULT-FOOT-SLIP-001
 | [docs/00-知识库规范.md](docs/00-知识库规范.md) | 单元模板、编号规则、证据等级、三类审核、版本规则 |
 | [docs/01-技巧库骨架.md](docs/01-技巧库骨架.md) | 双轴结构、5 个动作原则、三阶段、十个技巧和八个物理原理索引 |
 | [docs/02-建设路线.md](docs/02-建设路线.md) | 首期验收对照、未完成的部分、待定决策、下一步 |
+| [docs/03-感知层架构.md](docs/03-感知层架构.md) | 双流决策、122 条 observables 的能力审计、墙体坐标系缺口、按能力档位的排期 |
 
 ---
 
