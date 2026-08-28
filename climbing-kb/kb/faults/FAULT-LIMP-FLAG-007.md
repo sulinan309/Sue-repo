@@ -12,6 +12,7 @@ observables:
   - 旗腿是绷直的还是松垂的
   - 旗腿的方向与身体转开的方向是否相反
   - 旗腿是否有蹬在墙面或岩点上
+  - 旗腿的高度，以及它在整个动作里有没有移动过
 candidate_explanations:
   - explanation: 旗腿方向送反了，反而增大了重力的力臂
     evidence_required: 能看清身体旋转方向与旗腿方向
@@ -22,6 +23,12 @@ candidate_explanations:
   - explanation: 旗腿松垮，只贡献质量不贡献蹬墙的反向力矩
     evidence_required: 能观察到旗腿是否绷紧、是否接触墙面
     technique: TEC-MOV-FLAG-001
+  - explanation: 旗腿位置太低，动作过程中还需要重新找位置，稳定性被这次移动打断
+    evidence_required: 能看清旗腿高度，以及它在动作中途是否移动过
+    technique: TEC-MOV-TWIST-004
+  - explanation: 反过来把重量压到了旗腿上，承重脚反而卸载，等于把支撑点挪到了没有脚点的一侧
+    evidence_required: 能看清承重脚是否仍在加载（膝踝有无蹬伸迹象）
+    technique: TEC-MOV-TWIST-004
   - explanation: 这一步的开门力矩过大，旗式不足以抵消，需要换脚或换解法
     evidence_required: 旗式做对之后仍有明显旋转
     technique: null
@@ -32,10 +39,16 @@ hints:
   - 腿要送过身体中线才有用，半步没效果。
   - 旗腿别松着，让它蹬住墙。
   - 想知道够不够用力：出手前先并个手，能轻松并上就够了。
+  - 把它抬高一点，抬到动作做完它都不用再动。
 tasks: [TASK-FLAG-SWITCH-007, TASK-MATCH-TEST-020]
 safety:
   - 旗腿蹬墙时确认蹬点不是松动岩点或体积块边缘
   - 开门失控时身体绕轴甩出，落区按侧向甩出预估
+notes: >
+  「旗腿该用多大力」在来源之间有分歧：一条教学说要非常用力顶墙，
+  另一条说只是轻轻点墙、力量应集中在有脚点的那只脚上。
+  三条来源一致同意的只有：必须有接触、位置要高、全程不移动。
+  分歧的完整记录见 TEC-MOV-TWIST-004 的「一处来源之间的分歧」。
 evidence_level: 专家共识
 review:
   status: pending
