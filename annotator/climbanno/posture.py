@@ -143,14 +143,22 @@ def summarise(ps: list[Posture]) -> dict:
 # **换手换脚的过渡段常常是屈臂时间最长的地方**——新点已经抓住、脚还没换完，
 # 人就挂在那里，用肱二头肌把自己拴住。
 #
-# 实测一次成功的高脚发力：上升期右肘中位 172°（几乎伸直，很好），
-# 但上升结束后的换脚段降到 108°——代价全在这一秒里。
+# **但「肘角弯」本身不是问题。** 第一版只看肘角就报警，被实际数据推翻了两次：
+#
+#   1. 手点低于肩膀时，直臂根本不是选项——肘角是几何决定的，不是她的选择
+#   2. 手固定不动、身体往上走时，肩会靠近手，手臂必然弯曲——
+#      实测两个换脚段里重心分别上升 0.08 和 0.18 倍躯干长，
+#      肘角从 172° 降到 108° 全部来自身体上升，那是进展不是挂着
+#
+# 所以真正该报的是：**手臂弯着、而身体没有在上升**——那才是挂在肱二头肌上。
 #
 # 对应 FAULT-PULL-FIRST-011 的观察项「调整脚点期间，是否至少保留一条接近伸直的手臂」。
 
 ADJUST_MIN_S = 0.35       # 调脚段至少持续多久。0.4 秒的换脚是常见窗口，
                           # 阈值设到 0.5 会把它们全部漏掉
 STRAIGHT = 165.0          # 肘角大于此值算「接近伸直」
+RISING = 0.05             # 该段重心上升超过这个幅度（躯干长倍数）就不算挂着
+HAND_HIGH = 0.15          # 手至少要高于肩这个幅度，直臂才可能是个选项
 
 
 @dataclasses.dataclass
@@ -161,10 +169,12 @@ class BentAdjust:
     elbow_med: dict           # {"L": 角度或 None, "R": ...}，None=该机位测不准
     any_straight: bool        # 可测的手臂里有没有一条接近伸直
     measurable: int           # 有几条手臂可测
+    com_rise: float           # 该段重心上升，躯干长倍数
+    hand_above: float         # 最高的那只手相对肩的高度，躯干长倍数
 
 
 def detect_bent_adjust(frames, contacts, fps: float,
-                       reliable=None, elbow_ok=None) -> list[BentAdjust]:
+                       reliable=None, elbow_ok=None, com=None) -> list[BentAdjust]:
     """找「换脚时两臂都弯着」的时段。
 
     elbow_ok: {"L": 掩码, "R": 掩码}，来自 pose.joint_reliability。
@@ -173,6 +183,10 @@ def detect_bent_adjust(frames, contacts, fps: float,
     """
     n = len(frames)
     xy = np.stack([f.xy if f.ok else np.full((33, 2), np.nan) for f in frames])
+    if com is None:
+        com = np.array([f.com if f.com else (np.nan, np.nan) for f in frames])
+    torso = np.linalg.norm((xy[:, L_SHO] + xy[:, R_SHO]) / 2 -
+                           (xy[:, L_HIP] + xy[:, R_HIP]) / 2, axis=1)
     eL = _angle(xy[:, L_SHO], xy[:, L_ELB], xy[:, L_WRI])
     eR = _angle(xy[:, R_SHO], xy[:, R_ELB], xy[:, R_WRI])
     ok = np.ones(n, bool) if reliable is None else np.asarray(reliable, bool)
@@ -202,7 +216,16 @@ def detect_bent_adjust(frames, contacts, fps: float,
                     else:
                         med[side] = None
                 if cnt:
-                    out.append(BentAdjust(i / fps, j / fps, foot, med, straight, cnt))
+                    sc = float(np.nanmedian(torso[i:j]))
+                    rise = float(-(com[j - 1, 1] - com[i, 1])) / sc
+                    sho = (xy[i:j, L_SHO, 1] + xy[i:j, R_SHO, 1]) / 2
+                    above = float(np.nanmax([
+                        np.nanmedian((sho - xy[i:j, w_, 1]) / sc)
+                        for w_ in (L_WRI, R_WRI)]))
+                    # 只有「身体没在上升」且「手够高、直臂本来是个选项」才算问题
+                    if rise <= RISING and above >= HAND_HIGH:
+                        out.append(BentAdjust(i / fps, j / fps, foot, med,
+                                              straight, cnt, rise, above))
             i = j
     out.sort(key=lambda x: x.t0)
     return out
