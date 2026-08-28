@@ -1,0 +1,4 @@
+out/
+*.task
+__pycache__/
+*.pyc

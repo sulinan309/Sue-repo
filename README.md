@@ -9,6 +9,11 @@ AI 攀岩搭子产品的领域知识底座，对应《AI 攀岩搭子｜MVP 产�
 
 见 [climbing-kb/README.md](climbing-kb/README.md)。
 
+## annotator — 攀岩动作标注 demo
+
+感知层 P0–P3 档的可运行实现：姿态骨架、岩点检测、接触判定、动作阶段，
+输出带覆盖层的视频和逐帧证据记录。见 [annotator/README.md](annotator/README.md)。
+
 ```bash
 cd climbing-kb
 python3 tools/validate.py    # 校验结构完整性
