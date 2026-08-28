@@ -49,14 +49,20 @@ REQUIRED = {
     "task": ("tasks", [
         "id", "type", "name", "goal", "technique_refs", "steps",
         "evidence", "fallback", "safety", "grade_range", "review"]),
+    "case": ("cases", [
+        "id", "type", "outcome", "climber", "video", "facts", "measured",
+        "knowledge", "evidence_level", "review"]),
 }
+
+OUTCOMES = {"success", "failed", "partial"}
 
 # 哪些字段承载 ID 引用
 REF_FIELDS = ["physics", "principles", "techniques", "tasks", "faults",
-              "prerequisites", "technique_refs", "beta_refs", "cases"]
+              "prerequisites", "technique_refs", "beta_refs", "cases",
+              "knowledge", "paired_with"]
 
 ID_PREFIX = {"PRIN": "principle", "PHY": "physics", "TEC": "technique",
-             "FAULT": "fault", "TASK": "task"}
+             "FAULT": "fault", "TASK": "task", "CASE": "case"}
 
 errors, warnings = [], []
 
@@ -161,6 +167,23 @@ def check_unit(uid, fm, path, units):
             if tref and tref not in units:
                 err(uid, f"candidate_explanations[{i}].technique 引用了不存在的 {tref}")
 
+    # 案例
+    if utype == "case":
+        if fm.get("outcome") not in OUTCOMES:
+            err(uid, f"outcome 取值非法：{fm.get('outcome')!r}，只能是 "
+                     + " / ".join(sorted(OUTCOMES)))
+        m = fm.get("measured")
+        if isinstance(m, dict):
+            for k, v in m.items():
+                if isinstance(v, str) and v.strip() in ("", "待补", "TODO"):
+                    err(uid, f"measured.{k} 是占位值——该字段只放管线实测量，"
+                             f"人的判断请放 expert_notes")
+        elif "measured" in fm:
+            err(uid, "measured 不是键值结构")
+        pw = fm.get("paired_with")
+        if isinstance(pw, str) and pw not in units:
+            err(uid, f"paired_with 引用了不存在的 {pw}")
+
     # 技巧的三阶段
     if utype == "technique":
         phases = fm.get("phases")
@@ -173,7 +196,10 @@ def check_unit(uid, fm, path, units):
 
     # 引用完整性
     for field in REF_FIELDS:
-        for ref in fm.get(field) or []:
+        val = fm.get(field)
+        if isinstance(val, str):
+            continue                    # paired_with 之类的单值字段单独校验
+        for ref in val or []:
             if isinstance(ref, str) and ref not in units:
                 err(uid, f"{field} 引用了不存在的 {ref}")
 

@@ -39,6 +39,7 @@ sources:
   - type: research
     ref: "Development of Specific Motor Skills through System Wall Bouldering Training"
     url: https://pmc.ncbi.nlm.nih.gov/articles/PMC11250695/
+cases: ["CASE-2608-001", "CASE-2608-002"]
 evidence_level: 研究证据
 review:
   status: pending

@@ -41,7 +41,7 @@ safety:
   - 高脚需要较大髋关节外展和外旋活动度，强行完成容易拉伤内收肌
   - 站起失败时身体重心已经很高，掉落距离比一般动作大，确认落区
 beta_refs: []
-cases: []
+cases: ["CASE-2608-001", "CASE-2608-002"]
 sources:
   - type: research
     ref: "Biomechanical Principles and Techniques—A Systematization for Sport Climbing"

@@ -24,6 +24,7 @@ sources:
   - type: research
     ref: "Sport climbing performance determinants and functional testing methods"
     url: https://pubmed.ncbi.nlm.nih.gov/39216626/
+cases: ["CASE-2608-001", "CASE-2608-002"]
 evidence_level: 研究证据
 review:
   status: pending

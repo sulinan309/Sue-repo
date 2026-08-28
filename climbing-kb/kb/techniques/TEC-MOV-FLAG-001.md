@@ -40,7 +40,7 @@ safety:
   - 旗腿蹬墙时确认蹬的位置不是松动的岩点或体积块边缘
   - 开门失控时身体会绕轴甩出，落区判断应当按「会被甩向侧面」预估，不是垂直下落
 beta_refs: []
-cases: []
+cases: ["CASE-2608-001"]
 sources:
   - type: research
     ref: "Biomechanical Principles and Techniques—A Systematization for Sport Climbing"
