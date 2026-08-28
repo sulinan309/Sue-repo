@@ -1,0 +1,183 @@
+"""事件锚定与归一化口径。compare.py（动态）和 card.py（静态）共用。
+
+两条口径上的决定，写在这里而不是散在两个产物里：
+
+**T0 ＝ 高脚建立「持续」接触的时刻。** 取最长一段连续 contact 的起点。
+单次状态跳变不能当事件用——实测接触状态每秒能抖好几回（out6 在 6.3–6.6s
+之间 RF 反复 contact↔moving 五次）。
+
+**一切以承重踝为参考点，再除以躯干长。** 承重脚踩在固定岩点上，用它当原点，
+镜头平移被精确抵消（本片镜头漂移达 183px），归一后数字能跨素材、跨机位、
+跨人比较。绝不输出像素值：机位近 20%，同一个动作的像素数就差 20%，
+那个数字换一段素材就作废。承重踝本身有 ±26px 抖动，先做中位滤波再用。
+"""
+from __future__ import annotations
+
+import json
+import pathlib
+
+import cv2
+import numpy as np
+
+NOSE = 0
+L_SHO, R_SHO, L_HIP, R_HIP, L_KNE, R_KNE, L_ANK, R_ANK = \
+    11, 12, 23, 24, 25, 26, 27, 28
+
+
+def medf(a, w=7):
+    """中位滤波：去掉关键点抖动，保留镜头跟随这种慢变化。"""
+    out = a.copy()
+    for i in range(len(a)):
+        s = a[max(0, i - w // 2):i + w // 2 + 1]
+        s = s[np.isfinite(s)]
+        if len(s):
+            out[i] = np.median(s)
+    return out
+
+
+def load(outdir, video, foot=R_ANK, limb="RF"):
+    d = np.load(pathlib.Path(outdir) / "keypoints.npz")
+    xy, com = d["xy"], d["com"]
+    fps = float(d["fps"]) if "fps" in d else 30.0
+    ev = [json.loads(x) for x in
+          (pathlib.Path(outdir) / "evidence.jsonl").open(encoding="utf-8")]
+    st = [{c["limb"]: c["state"] for c in e["contacts"]} for e in ev]
+
+    ax, ay = medf(xy[:, foot, 0]), medf(xy[:, foot, 1])
+    torso = medf(np.linalg.norm((xy[:, L_SHO] + xy[:, R_SHO]) / 2 -
+                                (xy[:, L_HIP] + xy[:, R_HIP]) / 2, axis=1))
+    cap = cv2.VideoCapture(video)
+    frames = []
+    while True:
+        ok, f = cap.read()
+        if not ok:
+            break
+        frames.append(f)
+    cap.release()
+
+    best, i = (0, 0), 0
+    while i < len(st):
+        if st[i].get(limb) == "contact":
+            j = i
+            while j < len(st) and st[j].get(limb) == "contact":
+                j += 1
+            if j - i > best[1] - best[0]:
+                best = (i, j)
+            i = j
+        else:
+            i += 1
+    t0, t_end = best
+    return {"xy": xy, "com": com, "frames": frames, "fps": fps, "torso": torso,
+            "ax": ax, "ay": ay, "t0": t0, "t_end": t_end,
+            "n": min(len(frames), len(xy)),
+            "dx": (com[:, 0] - ax) / torso,      # 水平：力的方向对不对
+            "dy": (ay - com[:, 1]) / torso}      # 垂直：腿站起来了多少
+
+
+def idx(s, dt):
+    """T0 之后 dt 秒对应的帧号。"""
+    return min(s["t0"] + int(round(dt * s["fps"])), s["n"] - 1)
+
+
+def rise(s, i):
+    """第 i 帧相对 T0 的高度变化（倍躯干长）。"""
+    return s["dy"][i] - s["dy"][s["t0"]]
+
+
+def ghost_xy(s, i):
+    """踩实瞬间的重心，换算到第 i 帧的画面坐标——这样镜头漂移被抵消。"""
+    t0 = s["t0"]
+    return (s["ax"][i] + s["dx"][t0] * s["torso"][i],
+            s["ay"][i] - s["dy"][t0] * s["torso"][i])
+
+
+def crop_box(s, aspect, times):
+    """框住这些时刻里所有要画的东西：躯干、腿、重心、残影。"""
+    pts = []
+    for dt in times:
+        i = idx(s, dt)
+        for k in (NOSE, L_SHO, R_SHO, L_HIP, R_HIP, L_KNE, R_KNE,
+                  L_ANK, R_ANK):        # 含头顶：人升起来时不能把脑袋裁掉
+            if np.isfinite(s["xy"][i, k]).all():
+                pts.append(s["xy"][i, k])
+        if np.isfinite(s["com"][i]).all():
+            pts.append(s["com"][i])
+        pts.append(np.array(ghost_xy(s, i)))
+    p = np.array(pts)
+    h, w = s["frames"][0].shape[:2]
+    x0, x1, y0, y1 = p[:, 0].min(), p[:, 0].max(), p[:, 1].min(), p[:, 1].max()
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    bh = (y1 - y0) * 1.18
+    bw = max(bh * aspect, (x1 - x0) * 1.45)
+    return _fit(cx, cy, bw, bw / aspect, w, h, aspect)
+
+
+def _fit(cx, cy, bw, bh, w, h, aspect):
+    if bw > w:
+        bw, bh = w, w / aspect
+    if bh > h:
+        bh, bw = h, h * aspect
+    cx = min(max(cx, bw / 2), w - bw / 2)
+    cy = min(max(cy, bh / 2), h - bh / 2)
+    return (int(cx - bw / 2), int(cy - bh / 2),
+            int(cx + bw / 2), int(cy + bh / 2))
+
+
+def common_boxes(srcs, aspect, times):
+    """多段取同一个框尺寸：比例尺不同的话，几段之间就没法直接比大小。"""
+    raw = [crop_box(s, aspect, times) for s in srcs]
+    bw = max(b[2] - b[0] for b in raw)
+    out = []
+    for s, b in zip(srcs, raw):
+        h, w = s["frames"][0].shape[:2]
+        if bw > w or bw / aspect > h:
+            out.append(b)
+            continue
+        out.append(_fit((b[0] + b[2]) / 2, (b[1] + b[3]) / 2,
+                        bw, bw / aspect, w, h, aspect))
+    return out
+
+
+GHOST = (150, 150, 150)       # 踩实瞬间的重心位置——中性灰，不占序列色
+
+
+def draw_marks(s, i, col, ghost=True):
+    """在第 i 帧上画出被测量的两个量，返回原分辨率的标注帧。
+
+    铅垂线到重心的**水平**箭头 ＝ 力的方向对不对；
+    残影到重心的**垂直**箭头 ＝ 从踩实到现在，腿把人送高了多少。
+    覆盖在花墙面上，每一笔都先画暗包边再画本体，否则会糊掉。
+    """
+    from climbanno.viz import CASE, cased
+
+    img = s["frames"][i].copy()
+    a = (int(s["ax"][i]), int(s["ay"][i]))
+    c = s["com"][i]
+    if not np.isfinite(c).all():
+        return img
+    c = (int(c[0]), int(c[1]))
+    g = ghost_xy(s, i)
+    g = (int(g[0]), int(g[1]))
+
+    cased(lambda k, t: cv2.line(img, (a[0], min(c[1], g[1]) - 70), a, k, t,
+                                cv2.LINE_AA), col, 7, 3)
+    cased(lambda k, t: cv2.circle(img, a, 13, k, t, cv2.LINE_AA), col, 8, 4)
+    cased(lambda k, t: cv2.arrowedLine(img, c, (a[0], c[1]), k, t,
+                                       cv2.LINE_AA, tipLength=0.2), col, 8, 4)
+    if ghost:
+        for k in range(0, 360, 30):
+            cv2.ellipse(img, g, (13, 13), 0, k, k + 16, CASE, 6, cv2.LINE_AA)
+            cv2.ellipse(img, g, (13, 13), 0, k, k + 16, GHOST, 3, cv2.LINE_AA)
+        if abs(c[1] - g[1]) > 34:
+            tip = c[1] - 16 * np.sign(c[1] - g[1])      # 收在圆点外侧
+            cased(lambda k, t: cv2.arrowedLine(img, g, (g[0], int(tip)), k, t,
+                                               cv2.LINE_AA, tipLength=0.16),
+                  col, 13, 7)
+    cv2.circle(img, c, 12, CASE, -1, cv2.LINE_AA)
+    cv2.circle(img, c, 9, (255, 255, 255), -1, cv2.LINE_AA)
+    return img
+
+
+def crop_to(img, box, w_out, h_out):
+    x0, y0, x1, y1 = box
+    return cv2.resize(img[y0:y1, x0:x1], (w_out, h_out))

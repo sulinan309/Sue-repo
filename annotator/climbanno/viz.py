@@ -106,3 +106,44 @@ def cased(fn, col, wide, thin):
     """先画暗包边再画本体——覆盖在视频上的标记靠这个脱开背景。"""
     fn(CASE, wide)
     fn(col, thin)
+
+
+def round_mask(h, w, r, top=True, bottom=True):
+    """圆角遮罩。视频要贴进圆角卡片，靠这个把四角切掉。"""
+    m = np.zeros((h, w), np.uint8)
+    cv2.rectangle(m, (r, 0), (w - r - 1, h - 1), 255, -1)
+    cv2.rectangle(m, (0, r), (w - 1, h - r - 1), 255, -1)
+    for cx, cy, is_top in ((r, r, True), (w - r - 1, r, True),
+                           (r, h - r - 1, False), (w - r - 1, h - r - 1, False)):
+        if (is_top and top) or (not is_top and bottom):
+            cv2.circle(m, (cx, cy), r, 255, -1, cv2.LINE_AA)
+        else:
+            cv2.rectangle(m, (cx - r, cy - r), (cx + r, cy + r), 255, -1)
+    return m
+
+
+def rrect(img, x0, y0, x1, y1, col, r=14, thick=-1):
+    """圆角矩形。thick=-1 填充，>0 描边。"""
+    x0, y0, x1, y1 = int(x0), int(y0), int(x1), int(y1)
+    r = int(min(r, (x1 - x0) // 2, (y1 - y0) // 2))
+    if thick < 0:
+        cv2.rectangle(img, (x0 + r, y0), (x1 - r, y1), col, -1)
+        cv2.rectangle(img, (x0, y0 + r), (x1, y1 - r), col, -1)
+        for cx, cy in ((x0 + r, y0 + r), (x1 - r, y0 + r),
+                       (x0 + r, y1 - r), (x1 - r, y1 - r)):
+            cv2.circle(img, (cx, cy), r, col, -1, cv2.LINE_AA)
+        return
+    for a, b in (((x0 + r, y0), (x1 - r, y0)), ((x0 + r, y1), (x1 - r, y1)),
+                 ((x0, y0 + r), (x0, y1 - r)), ((x1, y0 + r), (x1, y1 - r))):
+        cv2.line(img, a, b, col, thick, cv2.LINE_AA)
+    for (cx, cy), a0 in (((x0 + r, y0 + r), 180), ((x1 - r, y0 + r), 270),
+                         ((x1 - r, y1 - r), 0), ((x0 + r, y1 - r), 90)):
+        cv2.ellipse(img, (cx, cy), (r, r), 0, a0, a0 + 90, col, thick, cv2.LINE_AA)
+
+
+def paste_rounded(canvas, img, x, y, r, top=True, bottom=True):
+    """把图贴进圆角区域，角外保留画布原色。"""
+    h, w = img.shape[:2]
+    m = round_mask(h, w, r, top, bottom) > 0
+    roi = canvas[y:y + h, x:x + w]
+    roi[m] = img[m]

@@ -27,9 +27,6 @@
 from __future__ import annotations
 
 import argparse
-import json
-import pathlib
-
 import cv2
 import numpy as np
 
@@ -37,153 +34,17 @@ from climbanno.viz import (
     SURFACE, CARD, FAIL, OK, INK1, INK2, INKM, GRID, AXIS, CASE,
     T, wrap, wash, cased)
 
-L_SHO, R_SHO, L_HIP, R_HIP, L_KNE, R_KNE, L_ANK, R_ANK = 11, 12, 23, 24, 25, 26, 27, 28
-GHOST = (150, 150, 150)       # 踩实瞬间的重心位置——中性灰，不占序列色
+from climbanno.anchor import (
+    load, idx, rise, ghost_xy, common_boxes, draw_marks, crop_to, GHOST)
+
 SAMPLES = (0.0, 0.4, 0.8)     # 两侧取同样的时刻
 TRACK_S = 1.2                 # 轨迹图画到 T0 之后多久
 
 
-def medf(a, w=7):
-    """中位滤波：去掉关键点抖动，保留镜头跟随这种慢变化。"""
-    out = a.copy()
-    for i in range(len(a)):
-        s = a[max(0, i - w // 2):i + w // 2 + 1]
-        s = s[np.isfinite(s)]
-        if len(s):
-            out[i] = np.median(s)
-    return out
-
-
-def load(outdir, video, foot=R_ANK, limb="RF"):
-    d = np.load(pathlib.Path(outdir) / "keypoints.npz")
-    xy, com = d["xy"], d["com"]
-    fps = float(d["fps"]) if "fps" in d else 30.0
-    ev = [json.loads(x) for x in
-          (pathlib.Path(outdir) / "evidence.jsonl").open(encoding="utf-8")]
-    st = [{c["limb"]: c["state"] for c in e["contacts"]} for e in ev]
-
-    ax, ay = medf(xy[:, foot, 0]), medf(xy[:, foot, 1])
-    torso = medf(np.linalg.norm((xy[:, L_SHO] + xy[:, R_SHO]) / 2 -
-                                (xy[:, L_HIP] + xy[:, R_HIP]) / 2, axis=1))
-    cap = cv2.VideoCapture(video)
-    frames = []
-    while True:
-        ok, f = cap.read()
-        if not ok:
-            break
-        frames.append(f)
-    cap.release()
-
-    # T0：最长的一段连续接触的起点。单次 contact 跳变每秒好几回，不能当事件用
-    best, i = (0, 0), 0
-    while i < len(st):
-        if st[i].get(limb) == "contact":
-            j = i
-            while j < len(st) and st[j].get(limb) == "contact":
-                j += 1
-            if j - i > best[1] - best[0]:
-                best = (i, j)
-            i = j
-        else:
-            i += 1
-    t0, t_end = best
-    return {"xy": xy, "com": com, "frames": frames, "fps": fps, "torso": torso,
-            "ax": ax, "ay": ay, "t0": t0, "t_end": t_end,
-            "dx": (com[:, 0] - ax) / torso,      # 水平：力的方向对不对
-            "dy": (ay - com[:, 1]) / torso}      # 垂直：腿站起来了多少
-
-
-def idx(s, dt):
-    return min(s["t0"] + int(round(dt * s["fps"])), len(s["xy"]) - 1,
-               len(s["frames"]) - 1)
-
-
-def ghost_xy(s, i):
-    """踩实瞬间的重心，换算到第 i 帧的画面坐标——这样镜头漂移被抵消。"""
-    t0 = s["t0"]
-    return (s["ax"][i] + s["dx"][t0] * s["torso"][i],
-            s["ay"][i] - s["dy"][t0] * s["torso"][i])
-
-
-def common_boxes(srcs, aspect):
-    """两行取同一个框尺寸：比例尺不同的话，两行之间就没法直接比大小。"""
-    raw = [crop_box(s, aspect) for s in srcs]
-    bw = max(b[2] - b[0] for b in raw)
-    out = []
-    for s, b in zip(srcs, raw):
-        h, w = s["frames"][0].shape[:2]
-        bh = bw / aspect
-        if bw > w or bh > h:                 # 放不下就整体退回该段自己的框
-            out.append(b)
-            continue
-        cx, cy = (b[0] + b[2]) / 2, (b[1] + b[3]) / 2
-        cx = min(max(cx, bw / 2), w - bw / 2)
-        cy = min(max(cy, bh / 2), h - bh / 2)
-        out.append((int(cx - bw / 2), int(cy - bh / 2),
-                    int(cx + bw / 2), int(cy + bh / 2)))
-    return out
-
-
-def crop_box(s, aspect):
-    """框住这几帧里所有要画的东西：躯干、腿、重心、残影。"""
-    pts = []
-    for dt in SAMPLES:
-        i = idx(s, dt)
-        for k in (L_SHO, R_SHO, L_HIP, R_HIP, L_KNE, R_KNE, L_ANK, R_ANK):
-            if np.isfinite(s["xy"][i, k]).all():
-                pts.append(s["xy"][i, k])
-        if np.isfinite(s["com"][i]).all():
-            pts.append(s["com"][i])
-        pts.append(np.array(ghost_xy(s, i)))
-    p = np.array(pts)
-    h, w = s["frames"][0].shape[:2]
-    x0, x1, y0, y1 = p[:, 0].min(), p[:, 0].max(), p[:, 1].min(), p[:, 1].max()
-    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
-    bh = (y1 - y0) * 1.18
-    bw = max(bh * aspect, (x1 - x0) * 1.45)
-    bh = bw / aspect
-    if bw > w:
-        bw, bh = w, w / aspect
-    if bh > h:
-        bh, bw = h, h * aspect
-    cx = min(max(cx, bw / 2), w - bw / 2)
-    cy = min(max(cy, bh / 2), h - bh / 2)
-    return (int(cx - bw / 2), int(cy - bh / 2),
-            int(cx + bw / 2), int(cy + bh / 2))
-
-
 def cell(s, dt, col, box, w_out, h_out):
-    """一格定格：铅垂线 + 踩实瞬间的重心残影 + 当前重心 + 两者之间的位移。"""
+    """一格定格。标记的画法在 anchor.draw_marks，与动态版共用。"""
     i = idx(s, dt)
-    img = s["frames"][i].copy()
-    a = (int(s["ax"][i]), int(s["ay"][i]))
-    c = s["com"][i]
-
-    if np.isfinite(c).all():
-        c = (int(c[0]), int(c[1]))
-        g = ghost_xy(s, i)
-        g = (int(g[0]), int(g[1]))
-        # 承重脚的铅垂参考线：水平偏移就是重心到它的距离
-        cased(lambda k, t: cv2.line(img, (a[0], min(c[1], g[1]) - 70), a, k, t,
-                                    cv2.LINE_AA), col, 7, 3)
-        cased(lambda k, t: cv2.circle(img, a, 13, k, t, cv2.LINE_AA), col, 8, 4)
-        # 水平偏移，画在重心那一行
-        cased(lambda k, t: cv2.arrowedLine(img, c, (a[0], c[1]), k, t,
-                                           cv2.LINE_AA, tipLength=0.2), col, 9, 5)
-        if dt > 0:
-            # 残影 + 位移：虚线圆是踩实瞬间重心所在，箭头是这段时间走了多远
-            for k in range(0, 360, 30):
-                cv2.ellipse(img, g, (13, 13), 0, k, k + 16, CASE, 6, cv2.LINE_AA)
-                cv2.ellipse(img, g, (13, 13), 0, k, k + 16, GHOST, 3, cv2.LINE_AA)
-            if abs(c[1] - g[1]) > 12:
-                cased(lambda k, t: cv2.arrowedLine(img, (g[0], g[1]), (g[0], c[1]),
-                                                   k, t, cv2.LINE_AA, tipLength=0.18),
-                      col, 11, 6)
-        cv2.circle(img, c, 12, CASE, -1, cv2.LINE_AA)
-        cv2.circle(img, c, 9, (255, 255, 255), -1, cv2.LINE_AA)
-
-    x0, y0, x1, y1 = box
-    return cv2.resize(img[y0:y1, x0:x1], (w_out, h_out))
+    return crop_to(draw_marks(s, i, col, ghost=dt > 0), box, w_out, h_out)
 
 
 def track(canvas, lab, txt, x, y, w, h, rows, x0b, x1b):
@@ -275,7 +136,7 @@ def main():
 
     rows = [("站起来了", OK, O, "重心升上去了"),
             ("没站起来", FAIL, F, "重心反而沉下去")]
-    boxes = common_boxes([r[2] for r in rows], ASPECT)
+    boxes = common_boxes([r[2] for r in rows], ASPECT, SAMPLES)
     y = HEAD + COLH
     for r, (name, col, s, verdict) in enumerate(rows):
         box = boxes[r]
@@ -283,7 +144,7 @@ def main():
         cv2.rectangle(canvas, (PAD, ry), (PAD + 5, ry + CH), col, -1)
         lab.append((PAD + 18, ry + 6, name, 27, INK1))
         lab.append((PAD + 18, ry + 44, verdict, 17, INK2, False))
-        d8 = s["dy"][idx(s, 0.8)] - s["dy"][s["t0"]]
+        d8 = rise(s, idx(s, 0.8))
         lab.append((PAD + 18, ry + 84, f"{d8:+.2f}", 40, INK1))
         lab.append((PAD + 18, ry + 134, "0.8 秒内的高度变化", 15, INKM, False))
         lab.append((PAD + 18, ry + 170,
@@ -300,9 +161,8 @@ def main():
     lab += [(PAD, 22, "踩上高脚之后，腿做了什么？", 40, INK1),
             (PAD, 74, f"两次都把右脚踩实了。踩实时重心横向偏出 "
                       f"{abs(O['dx'][O['t0']]):.2f} 对 {abs(F['dx'][F['t0']]):.2f}；"
-                      f"接下来 0.8 秒，一个升 "
-                      f"{O['dy'][idx(O, 0.8)] - O['dy'][O['t0']]:+.2f}，一个沉 "
-                      f"{F['dy'][idx(F, 0.8)] - F['dy'][F['t0']]:+.2f}。",
+                      f"接下来 0.8 秒，一个升 {rise(O, idx(O, 0.8)):+.2f}，"
+                      f"一个沉 {rise(F, idx(F, 0.8)):+.2f}。",
              21, INK2, False)]
     lx, ly = W - PAD, 88                      # 图例：画真的标记，不用文字里的 ○●
     for text, kind in (("承重脚铅垂线", "line"), ("当前重心", "dot"),
@@ -326,7 +186,7 @@ def main():
     for name, col, s, _ in rows:
         n = min(int(TRACK_S * s["fps"]) + 1, s["t_end"] - s["t0"])
         ts = [k / s["fps"] for k in range(n)]
-        vs = [s["dy"][s["t0"] + k] - s["dy"][s["t0"]] for k in range(n)]
+        vs = [rise(s, s["t0"] + k) for k in range(n)]
         trows.append((name, col, ts, vs))
     track(canvas, lab, txt, PAD, ty, W - PAD * 2, TRK, trows,
           PAD + 92, W - PAD - 132)
@@ -339,8 +199,7 @@ def main():
     for name, _, s, _ in rows:
         print(f"  {name}  T0={s['t0'] / s['fps']:.2f}s  "
               f"横向偏 {abs(s['dx'][s['t0']]):.2f}  "
-              + "  ".join(f"+{dt:.1f}s {s['dy'][idx(s, dt)] - s['dy'][s['t0']]:+.2f}"
-                          for dt in SAMPLES))
+              + "  ".join(f"+{dt:.1f}s {rise(s, idx(s, dt)):+.2f}" for dt in SAMPLES))
 
 
 if __name__ == "__main__":
