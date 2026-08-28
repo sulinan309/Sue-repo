@@ -39,6 +39,8 @@ def main():
     ap.add_argument("--model", default="pose_landmarker_full.task")
     ap.add_argument("--ref-frame", type=int, default=0, help="用哪一帧检测岩点")
     ap.add_argument("--no-video", action="store_true", help="只跑分析不出视频")
+    ap.add_argument("--range", default=None, metavar="起:止",
+                    help="只分析这一段（秒），例如 0:8.6")
     ap.add_argument("--samples", type=int, default=14, help="岩点检测采样帧数")
     ap.add_argument("--persist", type=float, default=0.4,
                     help="岩点位置一致性阈值：出现在多少比例的采样帧里才算数")
@@ -59,9 +61,24 @@ def main():
             break
         frames_bgr.append(f)
     cap.release()
+    if args.range:
+        a, b = (float(x) if x else None for x in args.range.split(":"))
+        lo = int((a or 0) * fps)
+        hi = int(b * fps) if b else len(frames_bgr)
+        frames_bgr = frames_bgr[lo:hi]
+        print(f"      只分析 {lo/fps:.2f}–{hi/fps:.2f}s")
     n = len(frames_bgr)
     h, w = frames_bgr[0].shape[:2]
     print(f"[1/5] 读入 {n} 帧  {w}x{h}  {fps:.1f}fps")
+
+    # 场景突变检测：视频里混入非攀爬内容（录屏界面、剪辑切换）时，
+    # 姿态和几何全部失效，但管线不会报错，只会安静地输出错误分析。
+    # 这里只做告警，不自动裁剪——裁哪一段应当由人决定。
+    gray0 = [float(cv2.cvtColor(f, cv2.COLOR_BGR2GRAY).mean()) for f in frames_bgr]
+    jumps = [i for i in range(1, n) if abs(gray0[i] - gray0[i - 1]) > 12]
+    if jumps:
+        print(f"      ⚠ 检测到 {len(jumps)} 处画面突变，最早在 {jumps[0]/fps:.2f}s"
+              f"（整体亮度跳变 >12）。若那里不是攀爬内容，用 --range 排除后重跑。")
 
     # ---- 姿态流 ----
     tracker = P.PoseTracker(args.model)
@@ -101,13 +118,22 @@ def main():
     post = PT.analyse(pframes)
     plan = CT.landing_plan(pframes, ev, wall_H=Hs)
     kp_xy = np.stack([f.xy if f.ok else np.full((33, 2), np.nan) for f in pframes])
+    kp_xy_img = kp_xy.copy()          # 渲染要用图像坐标，别被墙面变换覆盖
     kp_com = np.array([f.com if f.com else (np.nan, np.nan) for f in pframes])
     ct_seq = {L: [next((c.state for c in e.contacts if c.limb == L), "uncertain")
                   for e in ev] for L in CT.LIMBS}
-    drives = DV.detect(kp_xy, kp_com, ct_seq, fps)
+    drives = DV.detect(kp_xy, kp_com, ct_seq, fps, wall_H=Hs)
+    stalls = DV.detect_stalls(kp_xy, kp_com, ct_seq, fps, wall_H=Hs)
     print(f"[5/6] 姿态状态  " + "  ".join(
         f"{k}{v}" for k, v in PT.summarise(post).get("状态占比", {}).items())
-        + f"    落点计划 {len(plan)} 个    发力事件 {len(drives)} 次")
+        + f"    落点计划 {len(plan)} 个    发力事件 {len(drives)} 次"
+        + (f"    高脚停滞 {len(stalls)} 段" if stalls else ""))
+    for k, s in enumerate(stalls, 1):
+        print(f"      停滞{k} {DV.SIDE_CN[s.leg]}腿 {s.t0:.1f}–{s.t1:.1f}s  "
+              f"膝中位 {s.knee_med:.0f}°  净升 {s.net_rise:+.2f}  "
+              f"重心偏移 {s.offset_med:+.2f}")
+        for _what, _why, _unit in s.candidates():
+            print(f"         · {_what}  [{_unit}]")
     for k, dv in enumerate(drives, 1):
         print(f"      第{k}次 {DV.SIDE_CN[dv.leg]}腿 {dv.t_drive:5.1f}s  "
               f"膝 {dv.knee_from:.0f}°→{dv.knee_to:.0f}°  "
@@ -136,6 +162,15 @@ def main():
     summ["knowledge_base"] = report
     summ["posture"] = PT.summarise(post)
     summ["landings"] = len(plan)
+    summ["stalls"] = [{
+        "leg": DV.SIDE_CN[s.leg], "t0": round(s.t0, 2), "t1": round(s.t1, 2),
+        "knee_med": round(s.knee_med), "knee_max": round(s.knee_max),
+        "net_rise": round(s.net_rise, 2), "offset_med": round(s.offset_med, 2),
+        "other_knee_med": round(s.other_knee_med),
+        "foot_contact_rate": round(s.foot_contact_rate, 2),
+        "candidates": [{"发现": a, "机制": b, "知识单元": c}
+                       for a, b, c in s.candidates()],
+    } for s in stalls]
     summ["drives"] = [{
         "leg": DV.SIDE_CN[x.leg], "t": round(x.t_drive, 2),
         "knee": [round(x.knee_from), round(x.knee_to)],
@@ -154,7 +189,8 @@ def main():
                     "side_straight": (120, 230, 140), "side_bent": (110, 190, 250),
                     "transition": (200, 200, 200), "unknown": (150, 150, 150)}
         vw = cv2.VideoWriter(str(out / "annotated.mp4"),
-                             cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
+                             cv2.VideoWriter_fourcc(*"mp4v"), float(fps),
+                             (int(w), int(h)))
         for i in range(n):
             nxt = []
             for lg in CT.next_landings(plan, i, 2):
@@ -166,6 +202,14 @@ def main():
             p_ = post[i]
             meta = {"hold_r": hr, "next_landings": nxt,
                     "drive": DV.phase_at(drives, i / fps),
+                    "stall": next((s for s in stalls
+                                   if s.t0 <= i / fps <= s.t1), None),
+                    "ankle": (lambda a: (float(a[0]), float(a[1]))
+                              if np.isfinite(a).all() else None)(
+                        kp_xy_img[i, 28 if (next((s for s in stalls
+                                                  if s.t0 <= i / fps <= s.t1), None)
+                                            or type("x", (), {"leg": "R"})).leg == "R"
+                                  else 27]),
                     "posture_cn": p_.state_cn, "orient": p_.orient,
                     "eL": p_.elbow_l, "eR": p_.elbow_r,
                     "posture_col": POST_COL.get(p_.state, (235, 235, 235))}

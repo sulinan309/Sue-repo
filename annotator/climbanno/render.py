@@ -22,6 +22,8 @@ from PIL import Image, ImageDraw, ImageFont
 from .pose import SKELETON, LIMB_POINTS
 from .contact import LIMB_CN
 
+SIDE_CN_R = {"L": "左", "R": "右"}
+
 FONT = "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"
 FONT_R = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
 
@@ -97,7 +99,10 @@ def draw_frame(bgr, frame, ev, holds_xy, txt: Text, *, meta: dict) -> np.ndarray
     R = lambda base: max(3, int(round(base * k)))            # 半径
     F = lambda base: max(13, int(round(base * (0.6 + 0.4 * k))))  # 字号
 
-    placed: list[tuple[int, int, int, int]] = []
+    # 底部证据面板占位：标签不能放进去。面板高度稍后才算得出，
+    # 这里按最大可能高度预留。
+    PANEL_RESERVE = 200
+    placed: list[tuple[int, int, int, int]] = [(0, h - PANEL_RESERVE, w, h)]
 
     def _hit(r):
         for q in placed:
@@ -117,13 +122,13 @@ def draw_frame(bgr, frame, ev, holds_xy, txt: Text, *, meta: dict) -> np.ndarray
             cands.append((ax - tw // 2, ay + dy * (rad + th + 10)))
         for x, y in cands:
             x = max(6, min(w - tw - 8, int(x)))
-            y = max(6, min(h - th - 8, int(y)))
+            y = max(6, min(h - PANEL_RESERVE - th - 8, int(y)))
             r = (x - 7, y - 4, x + tw + 7, y + th + 6)
             if not _hit(r):
                 placed.append(r)
                 return x, y
         x = max(6, min(w - tw - 8, int(ax + d)))
-        y = max(6, min(h - th - 8, int(ay - th // 2)))
+        y = max(6, min(h - PANEL_RESERVE - th - 8, int(ay - th // 2)))
         placed.append((x - 7, y - 4, x + tw + 7, y + th + 6))
         return x, y
 
@@ -237,9 +242,49 @@ def draw_frame(bgr, frame, ev, holds_xy, txt: Text, *, meta: dict) -> np.ndarray
         chip(lx, ly, tw, th)
         labels.append((lx, ly, s, fs, C_COM))
 
+    # ---- 高脚停滞：把「重心没在脚上方」画出来 ----
+    stl = meta.get("stall")
+    ank = meta.get("ankle")
+    if stl is not None and ank and frame.ok and frame.com:
+        ax, ay = int(ank[0]), int(ank[1])
+        cx, cy = int(frame.com[0]), int(frame.com[1])
+        warn = (90, 160, 255)
+        # 承重脚的铅垂线——重心要送到这条线上才站得起来
+        for yy in range(min(cy, ay) - R(30), ay, 16):
+            cv2.line(out, (ax, yy), (ax, min(yy + 8, ay)), warn, W(2, 1), cv2.LINE_AA)
+        cv2.circle(out, (ax, ay), R(9), warn, W(3, 2), cv2.LINE_AA)
+        # 重心到铅垂线的水平差
+        cv2.arrowedLine(out, (cx, cy), (ax, cy), warn, W(3, 2), cv2.LINE_AA,
+                        tipLength=0.18)
+        s = f"重心偏离承重脚 {abs(stl.offset_med):.2f} 倍躯干长"
+        fsz = F(19)
+        tw, th = txt.size(s, fsz)
+        lx, ly = place((cx + ax) // 2, cy - R(18), tw, th, R(10), cx < w * 0.6)
+        chip(lx, ly, tw, th, 0.72)
+        labels.append((lx, ly, s, fsz, warn))
+
     # ---- 发力事件横幅 ----
     dv = meta.get("drive")
-    if dv:
+    if stl is not None:
+        head = f"高脚停滞 · {SIDE_CN_R[stl.leg]}腿 · {stl.t1 - stl.t0:.1f}s 未站起"
+        subs = [c[0] for c in stl.candidates()[:3]]
+        fh, fs2 = F(25), F(17)
+        tw1, th1 = txt.size(head, fh)
+        sizes = [txt.size(x, fs2) for x in subs]
+        bw = max([tw1] + [s0[0] for s0 in sizes]) + 28
+        bh = th1 + sum(s0[1] + 7 for s0 in sizes) + 26
+        ov = out.copy()
+        cv2.rectangle(ov, (16, 16), (16 + bw, 16 + bh), C_PANEL, -1)
+        out = cv2.addWeighted(ov, 0.88, out, 0.12, 0)
+        col = (90, 160, 255)
+        cv2.rectangle(out, (16, 16), (16 + bw, 16 + bh), col, 2)
+        cv2.rectangle(out, (16, 16), (21, 16 + bh), col, -1)
+        labels.append((30, 24, head, fh, col))
+        yy = 24 + th1 + 10
+        for s0, (sw0, sh0) in zip(subs, sizes):
+            labels.append((30, yy, "· " + s0, fs2, (215, 215, 215), False))
+            yy += sh0 + 7
+    elif dv:
         PH_COL = {"load": (110, 200, 255), "drive": (90, 235, 105),
                   "reach": (255, 190, 90), "settle": (200, 200, 200)}
         col = PH_COL.get(dv["phase"], (235, 235, 235))
