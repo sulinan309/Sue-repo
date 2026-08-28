@@ -25,13 +25,14 @@ candidate_explanations:
   - explanation: 这一步的开门力矩过大，旗式不足以抵消，需要换脚或换解法
     evidence_required: 旗式做对之后仍有明显旋转
     technique: null
-techniques: [TEC-MOV-FLAG-001]
+techniques: [TEC-MOV-FLAG-001, TEC-MOV-TWIST-004]
 physics: [PHY-TORQUE-003]
 hints:
   - 你被转开的方向，就是那条腿要去的方向。
   - 腿要送过身体中线才有用，半步没效果。
   - 旗腿别松着，让它蹬住墙。
-tasks: [TASK-FLAG-SWITCH-007]
+  - 想知道够不够用力：出手前先并个手，能轻松并上就够了。
+tasks: [TASK-FLAG-SWITCH-007, TASK-MATCH-TEST-020]
 safety:
   - 旗腿蹬墙时确认蹬点不是松动岩点或体积块边缘
   - 开门失控时身体绕轴甩出，落区按侧向甩出预估

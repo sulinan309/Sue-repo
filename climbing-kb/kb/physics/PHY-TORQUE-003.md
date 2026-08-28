@@ -28,7 +28,7 @@ climbing_manifestation:
   - 髋部离墙越远，体重对手部接触点的力矩越大，手上负荷越重
   - 直臂悬挂比屈臂省力，一部分原因是屈臂时肘关节要额外提供力矩
   - 旗式的两条作用路径：把重心移向轴（减小 d），或让旗腿蹬墙产生反向 τ
-techniques: [TEC-MOV-FLAG-001, TEC-POS-ORIENT-002, TEC-MOV-DROPKNEE-003, TEC-POS-COM-001]
+techniques: [TEC-MOV-FLAG-001, TEC-POS-ORIENT-002, TEC-MOV-DROPKNEE-003, TEC-POS-COM-001, TEC-MOV-TWIST-004]
 misconceptions:
   - 「贴墙是为了看起来专业」——贴墙是在缩短体重对手点的力臂，直接减轻手上负荷
   - 「开门要靠核心硬顶」——硬顶是在用肌肉产生反向力矩，代价很高；改变几何通常更省

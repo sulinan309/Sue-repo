@@ -31,12 +31,12 @@ observables:
   - 够点的那只手臂是伸直的还是屈着的
   - 承重脚用的是内侧还是外侧
   - 两脚水平间距是否长期大于一倍躯干长（宽对称站姿会迫使身体保持正对墙面）
-faults: [FAULT-SQUARE-REACH-008, FAULT-HIP-SAG-004]
+faults: [FAULT-SQUARE-REACH-008, FAULT-HIP-SAG-004, FAULT-PRESET-TWIST-017]
 hints:
   - 试试把够点那一侧的髋转向墙面。
   - 转个身，用脚的外侧踩。
   - 手别拉，先让髋贴上去。
-tasks: [TASK-SIDE-ON-009, TASK-STRAIGHT-ARM-010]
+tasks: [TASK-SIDE-ON-009, TASK-STRAIGHT-ARM-010, TASK-TWIST-WHILE-MOVING-019]
 safety:
   - 转髋需要一定的髋关节活动度，热身不足时容易造成内收肌或髋屈肌拉伤
   - 转体状态下掉落时身体是侧向的，落地缓冲比正身掉落更难控制，练习时降低高度
@@ -106,6 +106,11 @@ review:
 
 判断依据：两脚水平间距长期大于一倍躯干长，同时双肘长时间同时弯曲。
 两个都是从普通视频能直接量的。
+
+**「我知道要转髋，但什么时候转？」** → 这个单元讲的是**位置**，不是**时序**。
+转体应当与出手同时发生、髋先贴墙手后出，先侧好再出手在仰角上会失败。
+时序单独存在 [TEC-MOV-TWIST-004](TEC-MOV-TWIST-004.md)——
+那部分是教学共识，与本单元的研究证据等级不同，按规范拆开。
 
 **「侧身和折膝是一回事吗？」** → 不是。侧身是身体朝向，折膝是一种更强的髋部旋转，
 额外建立了两脚之间的对抗，见 [TEC-MOV-DROPKNEE-003](TEC-MOV-DROPKNEE-003.md)。

@@ -27,7 +27,7 @@ climbing_manifestation:
   - 高脚站起时先用手拉 → 发力顺序反了，腿的贡献被浪费
   - 动态起跳的力来自腿的蹬伸，经躯干传到手；核心松则跳不高
   - 「手臂很泵但腿完全不累」是链条断在髋部的典型信号
-techniques: [TEC-MOV-ROCKOVER-002, TEC-POS-TENSION-003, TEC-STR-SPEED-001, TEC-CON-LOAD-002, TEC-MOV-DROPKNEE-003]
+techniques: [TEC-MOV-ROCKOVER-002, TEC-POS-TENSION-003, TEC-STR-SPEED-001, TEC-CON-LOAD-002, TEC-MOV-DROPKNEE-003, TEC-MOV-TWIST-004]
 misconceptions:
   - 「用腿爬就是脚多使劲」——腿使劲只是第一节，传不过去等于没使
   - 「核心训练就是练腹肌」——链条要的是整段刚度和时序控制，孤立练腹肌迁移有限

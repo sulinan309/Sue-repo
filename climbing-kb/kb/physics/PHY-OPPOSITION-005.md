@@ -26,7 +26,7 @@ climbing_manifestation:
   - 折膝的核心机制是让两只脚形成对抗，把髋压向墙面
   - 陡墙上脚容易「掉出来」，是因为对抗不足，脚上没有足够的法向力
   - 撑压（stem）在两面夹角墙之间靠纯对抗支撑，可以完全不需要抓握
-techniques: [TEC-POS-TENSION-003, TEC-MOV-DROPKNEE-003, TEC-CON-LOAD-002, TEC-POS-ORIENT-002]
+techniques: [TEC-POS-TENSION-003, TEC-MOV-DROPKNEE-003, TEC-CON-LOAD-002, TEC-POS-ORIENT-002, TEC-MOV-TWIST-004]
 misconceptions:
   - 「对抗力能让人变轻」——它不改变合外力，体重一点没少；它改变的是每个点上能承受的方向和大小
   - 「张力就是腹肌用力」——张力是整条链的刚度，髋、躯干、肩、甚至手腕都参与；只练腹肌不解决问题
