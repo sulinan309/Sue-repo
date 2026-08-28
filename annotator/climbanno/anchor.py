@@ -3,8 +3,9 @@
 两条口径上的决定，写在这里而不是散在两个产物里：
 
 **T0 ＝ 高脚建立「持续」接触的时刻。** 取最长一段连续 contact 的起点。
-单次状态跳变不能当事件用——实测接触状态每秒能抖好几回（out6 在 6.3–6.6s
-之间 RF 反复 contact↔moving 五次）。
+单次状态跳变不能用：out5 全片 8.6 秒里 RF 的接触状态变化 15 次，最抖的
+1 秒内变了 8 次；6 段连续接触里有 4 段短于 0.25 秒，最长的一段 4.57 秒
+才是真正踩实的那次。
 
 **一切以承重踝为参考点，再除以躯干长。** 承重脚踩在固定岩点上，用它当原点，
 镜头平移被精确抵消（本片镜头漂移达 183px），归一后数字能跨素材、跨机位、
@@ -15,6 +16,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import sys
 
 import cv2
 import numpy as np
@@ -35,7 +37,29 @@ def medf(a, w=7):
     return out
 
 
+# 当前管线一定会写出的字段。缺了就说明这个目录是旧版本跑的。
+FRESH_KEYS = ("pose_reliable_rate", "analyzable_windows")
+
+
+def check_fresh(outdir):
+    """旧目录会安静地给出不一样的数字——必须吵出来。
+
+    out5 和 out6 是同一段视频的两次运行，关键点最大差 98px。用错了目录，
+    +2.0s 的高度变化是 -0.50 还是 -0.38，全看你打了哪个数字，而且不报错。
+    """
+    p = pathlib.Path(outdir) / "summary.json"
+    if not p.exists():
+        return
+    s = json.loads(p.read_text(encoding="utf-8"))
+    miss = [k for k in FRESH_KEYS if s.get(k) is None]
+    if miss:
+        print(f"[警告] {outdir}/summary.json 缺少 {'、'.join(miss)}——"
+              f"这是旧版管线的输出，数字与当前管线不一致。请重跑 annotate.py。",
+              file=sys.stderr)
+
+
 def load(outdir, video, foot=R_ANK, limb="RF"):
+    check_fresh(outdir)
     d = np.load(pathlib.Path(outdir) / "keypoints.npz")
     xy, com = d["xy"], d["com"]
     fps = float(d["fps"]) if "fps" in d else 30.0

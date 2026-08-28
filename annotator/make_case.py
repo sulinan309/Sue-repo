@@ -39,6 +39,44 @@ def ystr(v):
     return v
 
 
+ANCHOR_TIMES = (0.5, 1.0, 1.5, 2.0)
+ANCHOR_WIN = 2.0
+
+
+def anchor_measures(outdir: pathlib.Path, video: str):
+    """踩实锚点口径的实测量。
+
+    刻意复用 climbanno.anchor —— 知识库里的数字必须和产物里的出自同一条
+    代码路径，否则「0.43」在 README、卡片和 KB 里会慢慢变成三个数。
+    """
+    import numpy as np
+    from climbanno.anchor import load, idx, rise
+
+    s = load(str(outdir), video)
+    fps, t0 = s["fps"], s["t0"]
+    n = int(ANCHOR_WIN * fps)
+    if min(s["t_end"], s["n"]) - t0 < n:
+        raise SystemExit(f"{outdir} 从 T0 起不足 {ANCHOR_WIN}s，无法用锚点口径")
+    dxw = np.abs(s["dx"][t0:t0 + n])
+    dxw = dxw[np.isfinite(dxw)]
+    return {
+        "踩实锚点秒": round(t0 / fps, 2),
+        "踩实后持续接触秒": round((s["t_end"] - t0) / fps, 2),
+        "踩实时横向偏": round(float(abs(s["dx"][t0])), 2),
+        "横向偏移": {
+            "窗口": f"T0~+{ANCHOR_WIN:.1f}s",
+            "中位": round(float(np.median(dxw)), 2),
+            "p10": round(float(np.percentile(dxw, 10)), 2),
+            "p90": round(float(np.percentile(dxw, 90)), 2),
+            "全距": [round(float(dxw.min()), 2), round(float(dxw.max()), 2)],
+            "帧数": int(len(dxw)),
+        },
+        # 键加引号：以 + 开头的裸标量 YAML 解析起来太脆
+        "相对承重脚高度变化": {f'"+{t:.1f}s"': round(float(rise(s, idx(s, t))), 2)
+                       for t in ANCHOR_TIMES},
+    }
+
+
 def collect(outdir: pathlib.Path):
     """从 summary.json 里抽出可复用的量与事实。"""
     s = rd(outdir / "summary.json")
@@ -83,19 +121,80 @@ def collect(outdir: pathlib.Path):
     return measured, facts, sorted(knowledge), hints, s
 
 
+def emit_measured(measured, ind="  "):
+    """把实测量渲染成 YAML 行。嵌套字典按层缩进，字典列表用 - 起头。"""
+    out = []
+    for k, v in measured.items():
+        if isinstance(v, dict):
+            out.append(f"{ind}{k}:")
+            out += emit_measured(v, ind + "  ")
+        elif isinstance(v, list) and v and isinstance(v[0], dict):
+            out.append(f"{ind}{k}:")
+            for it in v:
+                first = True
+                for kk, vv in it.items():
+                    out.append((ind + "  - " if first else ind + "    ")
+                               + f"{kk}: {json.dumps(vv, ensure_ascii=False)}")
+                    first = False
+        else:
+            out.append(f"{ind}{k}: {json.dumps(v, ensure_ascii=False)}")
+    return out
+
+
+def update_measured(case_path: pathlib.Path, outdir: pathlib.Path, video: str):
+    """就地替换已有案例单元的 measured 块，正文和人工字段一概不动。
+
+    重算而不是重新草拟：叙述、expert_notes、审核状态都是人写的，
+    重新生成会把它们抹掉。
+    """
+    txt = case_path.read_text(encoding="utf-8")
+    lines = txt.split("\n")
+    try:
+        a = lines.index("measured:")
+    except ValueError:
+        raise SystemExit(f"{case_path.name} 里找不到 measured 块")
+    b = a + 1
+    while b < len(lines) and (lines[b].startswith(" ") or not lines[b].strip()):
+        if not lines[b].strip() and b + 1 < len(lines) and \
+                not lines[b + 1].startswith(" "):
+            break
+        b += 1
+
+    old = collect(outdir)[0]
+    old.update(anchor_measures(outdir, video))
+    new = lines[:a] + ["measured:"] + emit_measured(old) + lines[b:]
+    case_path.write_text("\n".join(new), encoding="utf-8")
+    return len(old)
+
+
 def main():
     ap = argparse.ArgumentParser(description="从管线输出草拟案例单元")
     ap.add_argument("outdir")
-    ap.add_argument("--id", required=True)
-    ap.add_argument("--outcome", required=True,
+    ap.add_argument("--id")
+    ap.add_argument("--outcome",
                     choices=["success", "failed", "partial"])
-    ap.add_argument("--climber", required=True, help="匿名标识，同一人跨案例复用")
+    ap.add_argument("--climber", help="匿名标识，同一人跨案例复用")
     ap.add_argument("--video", default=None, help="原视频文件名，只记名不记路径")
     ap.add_argument("--pair", default=None, help="配对案例 ID（正反对照）")
     ap.add_argument("--name", default=None)
     ap.add_argument("-o", "--out", default="../climbing-kb/kb/cases")
+    ap.add_argument("--update-measured", metavar="案例文件",
+                    help="只重算已有单元的 measured 块，正文不动")
+    ap.add_argument("--anchor-video", help="锚点口径需要读原视频")
     a = ap.parse_args()
 
+    if a.update_measured:
+        if not a.anchor_video:
+            raise SystemExit("--update-measured 需要 --anchor-video")
+        p = pathlib.Path(a.update_measured)
+        n = update_measured(p, pathlib.Path(a.outdir), a.anchor_video)
+        print(f"已更新 {p.name} 的 measured 块：{n} 项")
+        return
+
+    missing = [f for f, v in (("--id", a.id), ("--outcome", a.outcome),
+                              ("--climber", a.climber)) if not v]
+    if missing:
+        raise SystemExit("草拟新单元需要 " + "、".join(missing))
     outdir = pathlib.Path(a.outdir)
     measured, facts, knowledge, hints, s = collect(outdir)
     src = s.get("source", {})
