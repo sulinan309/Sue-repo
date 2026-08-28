@@ -13,6 +13,8 @@ observables:
   - 髋部与墙面的距离
   - 够点时手臂是伸直还是屈曲
   - 承重脚用的是内侧还是外侧
+  - 两脚水平间距是否长期大于一倍躯干长
+  - 双侧手肘是否长时间同时处于弯曲状态
 candidate_explanations:
   - explanation: 动作模式默认正身，没有建立转髋的习惯
     evidence_required: 整条线路中骨盆朝向基本不变
@@ -23,6 +25,9 @@ candidate_explanations:
   - explanation: 髋关节活动度不足，转不到位
     evidence_required: 视频难以区分「不会转」和「转不动」，需要结合用户自述
     technique: null
+  - explanation: 宽对称站姿把骨盆锁在正对墙面的方向，转髋没有空间
+    evidence_required: 两脚水平间距长期大于一倍躯干长，且双肘长时间同时弯曲
+    technique: TEC-POS-ORIENT-002
 techniques: [TEC-POS-ORIENT-002, TEC-MOV-DROPKNEE-003]
 physics: [PHY-TORQUE-003, PHY-ECONOMY-008]
 hints:

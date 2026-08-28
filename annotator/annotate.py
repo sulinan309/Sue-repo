@@ -102,6 +102,12 @@ def main():
     with (out / "evidence.jsonl").open("w", encoding="utf-8") as fh:
         for e in ev:
             fh.write(json.dumps(e.as_dict(), ensure_ascii=False) + "\n")
+    np.savez_compressed(out / "keypoints.npz",
+        xy=np.stack([f.xy if f.ok else np.full((33, 2), np.nan) for f in pframes]),
+        vis=np.stack([f.vis if f.ok else np.zeros(33) for f in pframes]),
+        com=np.array([f.com if f.com else (np.nan, np.nan) for f in pframes]),
+        hip=np.array([f.hip if f.hip else (np.nan, np.nan) for f in pframes]),
+        fps=fps)
     (out / "holds.json").write_text(json.dumps(
         [{"id": hd.id, "x": hd.x, "y": hd.y, "r": hd.r, "area": hd.area,
           "kind": hd.kind} for hd in hold_list],

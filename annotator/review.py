@@ -82,6 +82,64 @@ def finding(name, unit, k, n_, base, note=""):
     }
 
 
+# --- 姿态几何指标 ---------------------------------------------------------
+# 这一组是「姿态几何」，区别于上面的「时序」。
+# 我第一版只算了时序类（髋先动、脚脱落同步、停顿），结论是「可测层看不到问题」——
+# 那是错的：屈臂、站姿宽度、重心水平位置全都是纯 2D 姿态，同样在 P0/P1 档，
+# 而且屈臂这一条在知识库里有 4 处 observables 明确要求。漏算不是能力不足。
+
+L_SHO, R_SHO, L_ELB, R_ELB, L_WRI, R_WRI = 11, 12, 13, 14, 15, 16
+L_HIP, R_HIP, L_FOOT, R_FOOT = 23, 24, 31, 32
+ELBOW_BENT = 160.0       # 肘角小于此值算「明显弯曲」
+STANCE_WIDE = 1.0        # 两脚水平间距 / 躯干长，大于此值算「宽站姿」
+
+
+def _angle(a, b, c):
+    v1, v2 = a - b, c - b
+    cos = np.sum(v1 * v2, axis=-1) / (
+        np.linalg.norm(v1, axis=-1) * np.linalg.norm(v2, axis=-1) + 1e-9)
+    return np.degrees(np.arccos(np.clip(cos, -1, 1)))
+
+
+def posture(npz_path):
+    """从关键点算姿态几何指标，并按上攀/下攀分段。
+
+    归一化基准用**躯干长**而不是肩宽：侧身时肩线在二维投影里会大幅缩短，
+    用肩宽做分母会把比值抬高，得到虚高的「宽站姿」占比。
+    """
+    d = np.load(npz_path)
+    xy, com, hip = d["xy"], d["com"], d["hip"]
+    fps = float(d["fps"]) if "fps" in d else FPS
+    n = len(xy)
+
+    torso = np.linalg.norm((xy[:, L_SHO] + xy[:, R_SHO]) / 2 -
+                           (xy[:, L_HIP] + xy[:, R_HIP]) / 2, axis=1)
+    eL = _angle(xy[:, L_SHO], xy[:, L_ELB], xy[:, L_WRI])
+    eR = _angle(xy[:, R_SHO], xy[:, R_ELB], xy[:, R_WRI])
+    both_bent = (eL < ELBOW_BENT) & (eR < ELBOW_BENT)
+    one_straight = ~both_bent
+
+    stance = np.abs(xy[:, L_FOOT, 0] - xy[:, R_FOOT, 0]) / np.maximum(torso, 1e-6)
+    fx = np.stack([xy[:, L_FOOT, 0], xy[:, R_FOOT, 0]])
+    inside = ((com[:, 0] >= np.nanmin(fx, axis=0)) &
+              (com[:, 0] <= np.nanmax(fx, axis=0)))
+
+    peak = int(np.nanargmin(hip[:, 1]))       # 髋部图像 y 最小 = 最高点
+    segs = {"上攀": slice(0, peak + 1), "下攀": slice(peak + 1, n)}
+    return {
+        "fps": fps, "n": n, "peak_frame": peak, "peak_t": peak / fps,
+        "segments": {
+            name: {
+                "时长s": round((sl.stop - sl.start) / fps, 1),
+                "双肘同时弯曲": round(float(np.nanmean(both_bent[sl])) * 100),
+                "至少一条直臂": round(float(np.nanmean(one_straight[sl])) * 100),
+                "宽站姿": round(float(np.nanmean(stance[sl] > STANCE_WIDE)) * 100),
+                "站姿宽度中位": round(float(np.nanmedian(stance[sl])), 2),
+                "重心在两脚水平范围内": round(float(np.nanmean(inside[sl])) * 100),
+            } for name, sl in segs.items()},
+    }
+
+
 def main():
     path = sys.argv[1] if len(sys.argv) > 1 else "out/evidence.jsonl"
     ev, n, hip, st = load(path)
@@ -147,6 +205,30 @@ def main():
     print("各肢体移动次数")
     for L in LIMBS:
         print(f"    {CN[L]} {len(move_events(st[L], n))} 次")
+
+    # --- 姿态几何 ---
+    import pathlib
+    npz = pathlib.Path(path).parent / "keypoints.npz"
+    if npz.exists():
+        ps = posture(npz)
+        print(f"\n姿态几何（分段：髋部最高点在 {ps['peak_t']:.1f}s）")
+        print("─" * 66)
+        keys = ["时长s", "双肘同时弯曲", "至少一条直臂", "宽站姿",
+                "站姿宽度中位", "重心在两脚水平范围内"]
+        print(f"  {'':6s}" + "".join(f"{k:>14s}" for k in keys))
+        for name, v in ps["segments"].items():
+            row = "".join(
+                f"{str(v[k]) + ('%' if k not in ('时长s', '站姿宽度中位') else ''):>14s}"
+                for k in keys)
+            print(f"  {name:6s}{row}")
+        print(f"\n  阈值：肘角 < {ELBOW_BENT:.0f}° 算弯曲；"
+              f"两脚水平间距 > {STANCE_WIDE} 倍躯干长算宽站姿")
+        print("  归一化用躯干长而非肩宽——侧身时肩线在二维投影里会坍缩，"
+              "用肩宽会得到虚高的宽站姿占比")
+        print("  关联知识单元：PRIN-LEGS-004 / FAULT-PULL-FIRST-011 /"
+              " FAULT-SQUARE-REACH-008 / TEC-POS-ORIENT-002")
+    else:
+        print(f"\n（未找到 {npz}，跳过姿态几何。重跑 annotate.py 可生成）")
 
     print("\n本层无法回答的问题（需要更高能力档位）")
     for q, tier in [
