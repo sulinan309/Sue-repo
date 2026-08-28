@@ -26,7 +26,10 @@ candidate_explanations:
   - explanation: 脚点本身太小或太滑，只能整脚摊上去争取摩擦，与角度选择无关
     evidence_required: 能看清脚点尺寸与鞋接触面的关系
     technique: TEC-CON-FOOT-001
-techniques: [TEC-CON-FOOT-001, TEC-POS-ORIENT-002]
+  - explanation: 「换脚之后感觉支撑不住」其实是交接没做完——新脚落位了但没有加载，与踩的角度无关
+    evidence_required: 新脚建立接触之后髋部有没有向该脚方向移动；旧脚离开前重心的水平位移有没有先开始
+    technique: TEC-CON-SWAP-003
+techniques: [TEC-CON-FOOT-001, TEC-POS-ORIENT-002, TEC-CON-SWAP-003]
 hints:
   - 别顺着岩点的形状踩，脚尖斜着放，大概 45 度。
   - 用鞋的内侧或外侧边缘吃力，不要整个脚掌摊上去。
@@ -41,8 +44,8 @@ review:
   fact: null
   climb: null
   teaching: null
-  version: 0.1.0
-  updated: 2026-08-28
+  version: 0.2.0
+  updated: 2026-08-29
 ---
 
 ## 岩点的形状会骗你
@@ -66,6 +69,20 @@ review:
 同时给脚踝留出向两侧转动的余量。
 
 判断标准不是角度本身，而是：**放上去之后，身体还能不能转。**
+
+## 「换脚之后感觉支撑不住」要先分流
+
+这句用户语言写在本卡的 `user_language` 里，但它**不一定是踩平的问题**。
+
+同一句话有两条完全不同的路：
+
+| 实际情况 | 去哪 |
+| --- | --- |
+| 站住了，但转不动 | 本卡：脚横着踩，脚踝没有转体余量 |
+| 压根没站住，重量还在手上 | [TEC-CON-SWAP-003](../techniques/TEC-CON-SWAP-003.md)：交接的第四段没做，新脚没加载 |
+
+区分它们的可观察事实是**新脚建立接触之后髋部有没有向那只脚移动**，
+不是脚的角度。产品先分流，再给建议。
 
 ## 一个提醒
 

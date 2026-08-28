@@ -15,7 +15,7 @@ observables:
   - 踩上去之后脚有没有二次调整、滑动或抖动
   - 手的受力方向与岩点开口方向是否一致
   - 鞋底与岩点的接触面积是大面积贴合还是只有一个尖端
-techniques: [TEC-CON-FOOT-001, TEC-CON-LOAD-002]
+techniques: [TEC-CON-FOOT-001, TEC-CON-LOAD-002, TEC-CON-SWAP-003]
 sources:
   - type: research
     ref: "Biomechanical Principles and Techniques—A Systematization for Sport Climbing"
@@ -26,8 +26,8 @@ review:
   fact: null
   climb: null
   teaching: null
-  version: 0.1.0
-  updated: 2026-08-25
+  version: 0.1.1
+  updated: 2026-08-29
 ---
 
 ## 原则含义

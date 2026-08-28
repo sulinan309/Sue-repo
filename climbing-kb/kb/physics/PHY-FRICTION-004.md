@@ -27,7 +27,7 @@ climbing_manifestation:
   - 板墙上站直、髋部远离墙面，重力的法向分量更大，脚更不容易滑
   - 板墙上「怕高所以贴住墙」会减小脚上的法向力，反而更容易滑——这是新手最常见的反直觉错误
   - 脚一旦开始滑就很难止住，因为动摩擦系数低于静摩擦系数
-techniques: [TEC-CON-FOOT-001, TEC-CON-LOAD-002]
+techniques: [TEC-CON-FOOT-001, TEC-CON-LOAD-002, TEC-CON-SWAP-003]
 misconceptions:
   - 「接触面积越大摩擦越大」——库仑模型下与面积无关；但攀岩鞋橡胶是特例，大面积贴合确实有帮助，原因是材料特性不是经典摩擦
   - 「板墙上要贴着墙才安全」——恰恰相反，贴墙减小法向力，站直把重量压在脚上才稳
@@ -42,8 +42,8 @@ review:
   fact: null
   climb: null
   teaching: null
-  version: 0.1.0
-  updated: 2026-08-25
+  version: 0.1.1
+  updated: 2026-08-29
 ---
 
 ## 板墙上那个反直觉的结论

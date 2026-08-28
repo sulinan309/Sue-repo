@@ -16,7 +16,7 @@ observables:
   - 释放一只手或一只脚之前，身体有没有先停稳
   - 有没有可见的摆动、抖动或反复找平衡
   - 髋部是否下坠离墙
-techniques: [TEC-MOV-FLAG-001, TEC-POS-TENSION-003, TEC-POS-ORIENT-002]
+techniques: [TEC-MOV-FLAG-001, TEC-POS-TENSION-003, TEC-POS-ORIENT-002, TEC-CON-SWAP-003]
 sources:
   - type: research
     ref: "Biomechanical Principles and Techniques—A Systematization for Sport Climbing"
@@ -27,8 +27,8 @@ review:
   fact: null
   climb: null
   teaching: null
-  version: 0.1.0
-  updated: 2026-08-25
+  version: 0.1.1
+  updated: 2026-08-29
 ---
 
 ## 原则含义

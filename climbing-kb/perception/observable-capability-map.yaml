@@ -3,7 +3,8 @@
 # 知识库里每个单元的 observables 字段写的是「从普通单机位手机视频能看见什么」。
 # 那正是感知层的需求清单——不是我们想让模型做什么，是知识库已经要求它做什么。
 #
-# 本文件把 122 条 observables 逐条归到能力档位，用来回答三个问题：
+# 本文件把知识库全部 observables 逐条归到能力档位（2026-08-29：168 条），
+# 用来回答三个问题：
 #   1. 哪些反馈现在就能做（单流够用）
 #   2. 哪些必须等双流融合
 #   3. 哪些必须等墙体坐标系
@@ -83,22 +84,33 @@ hard:
   - [TEC-MOV-DROPKNEE-003, 2]
   - [FAULT-FOOT-CUT-003, 3]
   - [TEC-CON-FOOT-001, 2]
+  # 「新脚是不是落回旧脚那个点」需要脚—岩点关联。实测两段素材上脚的关联率是 0
+  # （左脚 0/29、右脚 0/77 接触帧，见 CASE-2608-003），手是 0.95 / 0.99。
+  # 归在 P3，但它是 P3 里最难的一档：脚与大体积块的几何关系本来就不稳。
+  - [TEC-CON-SWAP-003, 2]
+  # 鞋的哪一条边在吃力，接触区精细视觉也未必给得出
+  - [FAULT-FLAT-FOOT-018, 3]
 
 map:
   FAULT-BARNDOOR-016:      [P1, P3, P3, P3]
   FAULT-DYNO-CATCH-009:    [P3, P3, P1, P1]
   FAULT-FOOT-CUT-003:      [P3, P4, P4, P3]
   FAULT-FOOT-READJUST-002: [P3, P1, P4]
+  FAULT-FLAT-FOOT-018:     [P3, P3, P3, P3]
   FAULT-FOOT-SLIP-001:     [P3, P3, P4, P4]
   FAULT-HESITATE-013:      [P0, P1, P0, P0]
   FAULT-HIP-SAG-004:       [P4, P1, P0, P3]
-  FAULT-LIMP-FLAG-007:     [P0, P1, P1, P3]
+  FAULT-LIMP-FLAG-007:     [P0, P1, P1, P3, P0]
   FAULT-NO-PLAN-014:       [P2, P0, P3, P3]
   FAULT-PULL-FIRST-011:    [P0, P1, P0, P1, P1, P0]
   FAULT-REACH-FIRST-005:   [P0, P0, P0, P1]
   FAULT-ROCKOVER-STALL-010: [P4, P1, P0, P1]
   FAULT-SQUARE-REACH-008:  [P4, P4, P0, P3, P0, P0]
+  FAULT-OVERTWIST-019:     [P4, P4, P4, P1, P0]
+  FAULT-PRESET-TWIST-017:  [P1, P1, P4, P4]
+  FAULT-PULL-TORSO-IN-020: [P4, P1, P0, P0, P1]
   FAULT-STUCK-TRAVERSE-006: [P1, P3, P3]
+  FAULT-SWAP-DROP-021:     [P3, P3, P0, P1, P3]
   FAULT-SWING-012:         [P1, P3, P3, P4]
   FAULT-WRONG-HAND-015:    [P3, P3, P0, P0]
 
@@ -110,6 +122,7 @@ map:
 
   TEC-CON-FOOT-001:        [P3, PX-AUDIO, P1, P3]
   TEC-CON-LOAD-002:        [P3, P4, P4, P3]
+  TEC-CON-SWAP-003:        [P3, P3, P3, P0, P4, P3, P1]
   TEC-MOV-DROPKNEE-003:    [P1, P4, P3, P0]
   TEC-MOV-FLAG-001:        [P0, P3, P1, P1]
   TEC-MOV-ROCKOVER-002:    [P4, P0, P1, P1]
@@ -117,4 +130,5 @@ map:
   TEC-POS-COM-001:         [P0, P0, P4, P1]
   TEC-POS-ORIENT-002:      [P1, P4, P0, P3, P0]
   TEC-POS-TENSION-003:     [P3, P4, P1, P1]
+  TEC-MOV-TWIST-004:       [P4, P1, P4, P3, P4, P0, P4, P0, P1, P3]
   TEC-STR-SPEED-001:       [P0, P0, P3, P1]

@@ -25,7 +25,7 @@ climbing_manifestation:
   - 三点支撑之所以稳，是因为支撑范围变成一个面而不是一条线
   - 「稳住了才敢松手」的物理含义是：松手之后剩余接触点仍能满足两个条件
   - 抖动和反复微调，是身体在用主动肌力弥补力矩不平衡
-techniques: [TEC-MOV-FLAG-001, TEC-POS-TENSION-003, TEC-POS-COM-001, TEC-MOV-ROCKOVER-002]
+techniques: [TEC-MOV-FLAG-001, TEC-POS-TENSION-003, TEC-POS-COM-001, TEC-MOV-ROCKOVER-002, TEC-CON-SWAP-003]
 misconceptions:
   - 「三点固定是规矩」——它不是规矩，是让支撑范围从线变成面的手段；能满足平衡时两点也可以
   - 「稳不住就是核心弱」——常常是接触点分布问题，加一个反向力矩比练核心见效快得多
@@ -40,8 +40,8 @@ review:
   fact: null
   climb: null
   teaching: null
-  version: 0.1.0
-  updated: 2026-08-25
+  version: 0.1.1
+  updated: 2026-08-29
 ---
 
 ## 两个条件，缺一不可
