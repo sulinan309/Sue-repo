@@ -260,3 +260,61 @@ def backfill(tracker: "PoseTracker", frames_bgr, pf: list[Frame], fps: float,
         pf[i] = Frame(i, pf[i].t, True, xy, vis, _com_2d(xy, vis), hip)
         fixed += 1
     return pf, fixed
+
+
+# --- 姿态可靠性 -----------------------------------------------------------
+# 姿态检出率 100% 不等于姿态可信。攀岩里有两类常见的「检出了但不可信」：
+#
+#   1. 肢段朝向镜头 —— 大腿正对相机时投影被压缩，该关节的角度失去意义
+#   2. 姿态跳变     —— 深蹲、遮挡、运动模糊时关键点会在帧间大幅跳跃
+#
+# 实测一段 3.2 秒的素材：检出率 100%，但前 1 秒有 14/30 帧的关键点
+# 跳变超过 0.35 倍躯干长（最大一帧 2.12），而 1 秒之后只有 2/65。
+# 在那段数据上算出来的膝角会从 124° 跳到 50° 再跳回 117°，全是伪影。
+#
+# 不标出可靠区间，下游会在噪声上给出言之凿凿的错误结论。
+
+KEY_LM = [11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28]
+JUMP_MAX = 0.35          # 关键点帧间跳变上限（躯干长倍数）
+VIS_MIN = 0.50           # 关键点平均可见度下限
+
+
+def reliability(frames: list[Frame], win: int = 5) -> np.ndarray:
+    """逐帧姿态可靠性（True=可信）。检出与可信是两件事。"""
+    n = len(frames)
+    ok = np.array([f.ok for f in frames])
+    xy = np.stack([f.xy if f.ok else np.full((33, 2), np.nan) for f in frames])
+    vis = np.stack([f.vis if f.ok else np.zeros(33) for f in frames])
+
+    torso = np.linalg.norm((xy[:, L_SHO] + xy[:, R_SHO]) / 2 -
+                           (xy[:, L_HIP] + xy[:, R_HIP]) / 2, axis=1)
+    jump = np.zeros(n)
+    if n > 1:
+        jump[1:] = np.nanmax(np.linalg.norm(xy[1:, KEY_LM] - xy[:-1, KEY_LM],
+                                            axis=2), axis=1) / np.maximum(torso[1:], 1e-6)
+    good = ok & (np.nanmean(vis[:, KEY_LM], axis=1) >= VIS_MIN) & \
+        (np.nan_to_num(jump, nan=9.9) <= JUMP_MAX)
+
+    # 单帧抖动不该毁掉整段：用滑动多数票
+    out = good.copy()
+    h = win // 2
+    for i in range(n):
+        seg = good[max(0, i - h):i + h + 1]
+        out[i] = seg.mean() >= 0.5
+    return out
+
+
+def reliable_windows(rel: np.ndarray, fps: float, min_s: float = 0.4):
+    """把可靠帧合并成区间，返回 [(起秒, 止秒), ...]。"""
+    out, i, n = [], 0, len(rel)
+    while i < n:
+        if not rel[i]:
+            i += 1
+            continue
+        j = i
+        while j < n and rel[j]:
+            j += 1
+        if (j - i) / fps >= min_s:
+            out.append((i / fps, j / fps))
+        i = j
+    return out

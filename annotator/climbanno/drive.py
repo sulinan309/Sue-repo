@@ -71,6 +71,7 @@ class Drive:
     knee_held: float          # 稳定后的膝角——蹬伸有没有被保持住
     com_over_foot: float | None   # 蹬起时重心与承重脚的水平偏移（躯干长倍数）
     foot_slip: bool           # 蹬伸过程中承重脚是否脱离接触
+    knee_reliable: bool       # 该事件里膝角是否可信（肢段是否朝向镜头）
     fallback: float           # 蹬伸后重心回落量（躯干长倍数），正=掉回去了
 
     def candidates(self) -> list[tuple[str, str, str]]:
@@ -98,7 +99,9 @@ class Drive:
                 "蹬伸过程中承重脚脱离接触",
                 "支撑点消失，蹬伸无处着力",
                 "FAULT-FOOT-SLIP-001"))
-        if (self.knee_to - self.knee_from) < 30:
+        if not self.knee_reliable:
+            pass
+        elif (self.knee_to - self.knee_from) < 30:
             out.append((
                 f"蹬伸幅度有限（膝 {self.knee_from:.0f}°→{self.knee_to:.0f}°）",
                 "深度屈膝时伸膝肌群力臂最短，起始阶段本就最费力",
@@ -131,6 +134,31 @@ def _angle(a, b, c):
     return np.degrees(np.arccos(np.clip(cos, -1, 1)))
 
 
+# 肢段投影缩短检测。
+#
+# 二维姿态有一个根本限制：当一段肢体指向镜头时，它在图像上被压缩，
+# 该关节的「角度」失去意义。实测一段视频里右腿有 42% 的帧存在这种情况，
+# 前一秒更是高达 83%——深蹲时右膝高抬朝向镜头。
+# 在那些帧上，膝角会从 124° 跳到 50° 再跳回 117°，全是投影伪影。
+#
+# 不挡住它，检测器会把投影伪影当成一次「蹬伸」，给出完全错误的结论。
+FORESHORTEN = 0.65        # 投影长度低于自身中位的这个比例 → 该关节角度不可信
+
+
+def _unreliable(xy, side: str) -> np.ndarray:
+    """返回该腿膝角不可信的帧掩码。"""
+    hip = R_HIP if side == "R" else L_HIP
+    kne = R_KNE if side == "R" else L_KNE
+    ank = R_ANK if side == "R" else L_ANK
+    torso = np.linalg.norm((xy[:, 11] + xy[:, 12]) / 2 -
+                           (xy[:, L_HIP] + xy[:, R_HIP]) / 2, axis=1)
+    th = np.linalg.norm(xy[:, hip] - xy[:, kne], axis=1) / np.maximum(torso, 1e-6)
+    sh = np.linalg.norm(xy[:, kne] - xy[:, ank], axis=1) / np.maximum(torso, 1e-6)
+    mt, ms = np.nanmedian(th), np.nanmedian(sh)
+    bad = (th < FORESHORTEN * mt) | (sh < FORESHORTEN * ms)
+    return np.nan_to_num(bad, nan=True).astype(bool)
+
+
 def _smooth(a, win=7):
     out = a.copy()
     h = win // 2
@@ -141,7 +169,7 @@ def _smooth(a, win=7):
     return out
 
 
-def detect(xy, com, contacts, fps: float, wall_H=None) -> list[Drive]:
+def detect(xy, com, contacts, fps: float, wall_H=None, reliable=None) -> list[Drive]:
     """contacts: {limb: [state per frame]}，来自 contact.analyse 的结果。
 
     wall_H 给了就把重心和踝点映射到墙面坐标再算位移。
@@ -179,6 +207,10 @@ def detect(xy, com, contacts, fps: float, wall_H=None) -> list[Drive]:
 
     W = int(EXT_WIN * fps)
     out: list[Drive] = []
+    bad = {s: _unreliable(xy, s) for s in ("L", "R")}
+    if reliable is not None:
+        for s in ("L", "R"):
+            bad[s] = bad[s] | ~np.asarray(reliable, bool)
 
     for side in ("L", "R"):
         k = knee[side]
@@ -196,6 +228,13 @@ def detect(xy, com, contacts, fps: float, wall_H=None) -> list[Drive]:
             j = i + int(np.nanargmax(seg))
             if not np.isfinite(k[j]) or (k[j] - k[i]) < EXT_MIN:
                 i += 1
+                continue
+            # 蹬伸窗口里肢段投影是否明显缩短。
+            # 缩短不等于「没发生发力」——只等于「膝角这个量不可信」。
+            # 所以不丢弃事件，只标记，让下游压制依赖膝角的结论。
+            knee_ok = float(np.mean(bad[side][i:j + 1])) <= 0.4
+            if not knee_ok:
+                i += 1        # 投影伪影：不生成事件，也不占用去重间隔
                 continue
             if (i / fps - last_t) < MIN_GAP:
                 i += 1
@@ -284,7 +323,7 @@ def detect(xy, com, contacts, fps: float, wall_H=None) -> list[Drive]:
                 side, s / fps, i / fps, j / fps, t_rise, t_hand, which,
                 float(k[i]), float(k[j]),
                 float(com[j, 0] - com[i, 0]), dy, lead, chain,
-                success, rise_ratio, net, knee_held, cof, slip, fb))
+                success, rise_ratio, net, knee_held, cof, slip, fb, knee_ok))
             i = j + 1
 
     out.sort(key=lambda d: d.t_drive)
@@ -303,10 +342,12 @@ def describe(d: Drive) -> list[tuple[str, str, str]]:
     """按知识库的三阶段模型给出可读的时序表。"""
     rows = [
         ("蓄力", f"{d.t_load:.1f}–{d.t_drive:.1f}s",
-         f"{SIDE_CN[d.leg]}膝屈至 {d.knee_from:.0f}°，在{SIDE_CN[d.leg]}腿上建立发力空间"),
+         (f"{SIDE_CN[d.leg]}膝屈至 {d.knee_from:.0f}°，" if d.knee_reliable else "")
+         + f"在{SIDE_CN[d.leg]}腿上建立发力空间"),
         ("蹬起", f"{d.t_drive:.1f}–{d.t_ext_end:.1f}s",
-         f"{SIDE_CN[d.leg]}膝 {d.knee_from:.0f}°→{d.knee_to:.0f}°，"
-         f"重心上升 {d.com_dy:.0f}px、横移 {d.com_dx:+.0f}px"),
+         (f"{SIDE_CN[d.leg]}膝 {d.knee_from:.0f}°→{d.knee_to:.0f}°，"
+          if d.knee_reliable else "（该机位膝角不可测）")
+         + f"重心上升 {d.com_dy:.0f}px、横移 {d.com_dx:+.0f}px"),
     ]
     if d.t_hand is not None:
         rows.append(("出手", f"{d.t_hand:.1f}s",
@@ -342,6 +383,7 @@ def phase_at(drives: list[Drive], t: float, tail: float = 0.8):
                 "chain_cn": d.chain_cn, "lead": d.lead,
                 "knee": (d.knee_from, d.knee_to), "rise": d.com_dy,
                 "success": d.success, "rise_ratio": d.rise_ratio,
+                "knee_reliable": d.knee_reliable,
                 "com_over_foot": d.com_over_foot,
                 "candidates": d.candidates()}
     return None
@@ -371,6 +413,7 @@ class Stall:
     offset_med: float        # 重心相对承重踝的水平偏移，躯干长倍数
     other_knee_med: float    # 另一条腿的膝角中位——判断有没有参与
     foot_contact_rate: float
+    reliable: float          # 该段里膝角可信的帧占比
 
     def candidates(self) -> list[tuple[str, str, str]]:
         out = []
@@ -381,7 +424,7 @@ class Stall:
                 "腿蹬出去的力主要把身体推离墙面，只有很小的分量向上；"
                 "这一步不是力气问题，是力的方向不对",
                 "FAULT-ROCKOVER-STALL-010"))
-        if self.knee_max < 100:
+        if self.knee_max < 100 and self.reliable > 0.6:
             out.append((
                 f"{SIDE_CN[self.leg]}膝全程未打开（中位 {self.knee_med:.0f}°，"
                 f"峰值仅 {self.knee_max:.0f}°）",
@@ -402,7 +445,7 @@ class Stall:
         return out
 
 
-def detect_stalls(xy, com, contacts, fps: float, wall_H=None) -> list[Stall]:
+def detect_stalls(xy, com, contacts, fps: float, wall_H=None, reliable=None) -> list[Stall]:
     import cv2
     n = len(xy)
     if wall_H is not None:
@@ -425,6 +468,10 @@ def detect_stalls(xy, com, contacts, fps: float, wall_H=None) -> list[Stall]:
         (xy[:, 11] + xy[:, 12]) / 2 - (xy[:, L_HIP] + xy[:, R_HIP]) / 2, axis=1))
     need = int(STALL_MIN_S * fps)
     out: list[Stall] = []
+    bad = {s: _unreliable(xy, s) for s in ("L", "R")}
+    if reliable is not None:
+        for s in ("L", "R"):
+            bad[s] = bad[s] | ~np.asarray(reliable, bool)
 
     for side in ("L", "R"):
         deep = knee[side] < STALL_KNEE
@@ -446,12 +493,129 @@ def detect_stalls(xy, com, contacts, fps: float, wall_H=None) -> list[Stall]:
                     rate = float(np.mean([contacts[fk][m] == "contact"
                                           for m in range(i, j)]))
                     other = "L" if side == "R" else "R"
+                    rel = 1.0 - float(np.mean(bad[side][i:j]))
+                    if rel < 0.4:
+                        i = j                 # 这段基本看不准，不给结论
+                        continue
                     out.append(Stall(
                         side, i / fps, j / fps,
                         float(np.nanmedian(knee[side][i:j])),
                         float(np.nanmax(knee[side][i:j])),
                         net, float(np.nanmedian(off)),
-                        float(np.nanmedian(knee[other][i:j])), rate))
+                        float(np.nanmedian(knee[other][i:j])), rate, rel))
             i = j
     out.sort(key=lambda s: s.t0)
+    return out
+
+
+# --- 不依赖膝角的发力检测 -------------------------------------------------
+# 上面的 detect() 从「膝角屈到最深 → 快速伸展」找发力。这条路有个硬限制：
+# 攀岩里高脚发力时大腿常常正对镜头，投影被压缩，膝角失去意义
+# （实测一段视频里整次发力都落在这种帧上，膝角完全不可用）。
+#
+# 所以再给一条不依赖膝角的路：**直接从重心的持续上升找发力**。
+# 重心是否上升、手什么时候出、重心有没有移到脚上方——这三个量
+# 都不需要测膝角，在肢体朝向镜头时依然成立。
+
+RISE_V_MIN = 0.35        # 重心上升速度阈值（躯干长/秒）
+RISE_MIN_S = 0.25        # 持续多久才算一次发力
+RISE_GAP = 0.5           # 间隔小于此值的窗口合并
+
+
+@dataclasses.dataclass
+class Rise:
+    t0: float
+    t1: float
+    net: float               # 净上升，躯干长倍数
+    hand: str | None
+    t_hand: float | None
+    lead: float | None       # t_hand - t0，正=腿先蹬手后出
+    off_start: float | None  # 起升时重心相对承重踝的水平偏移
+    off_end: float | None    # 结束时的偏移
+    foot: str | None         # 承重脚
+
+
+def detect_rises(xy, com, contacts, fps: float, wall_H=None, reliable=None) -> list[Rise]:
+    import cv2
+    n = len(xy)
+    if wall_H is not None:
+        def _w(pts):
+            o = np.full_like(pts, np.nan, dtype=float)
+            for m in range(len(pts)):
+                if wall_H[m] is None or not np.isfinite(pts[m]).all():
+                    continue
+                q = np.array(pts[m], np.float32).reshape(1, 1, 2)
+                o[m] = cv2.perspectiveTransform(q, np.linalg.inv(wall_H[m])).reshape(2)
+            return o
+        com = _w(com)
+        xy = xy.copy()
+        for kp in (L_ANK, R_ANK, L_HIP, R_HIP, L_WRI, R_WRI, 11, 12):
+            xy[:, kp] = _w(xy[:, kp])
+
+    torso = _smooth(np.linalg.norm(
+        (xy[:, 11] + xy[:, 12]) / 2 - (xy[:, L_HIP] + xy[:, R_HIP]) / 2, axis=1))
+    vy = np.full(n, np.nan)
+    vy[1:] = -(com[1:, 1] - com[:-1, 1]) / np.maximum(torso[1:], 1e-6) * fps
+    vy = _smooth(vy, 9)
+
+    up = np.nan_to_num(vy, nan=0.0) > RISE_V_MIN
+    if reliable is not None:
+        up = up & np.asarray(reliable, bool)   # 不可信帧不参与发力判定
+    segs, i = [], 0
+    while i < n:
+        if not up[i]:
+            i += 1
+            continue
+        j = i
+        while j < n and up[j]:
+            j += 1
+        if (j - i) / fps >= RISE_MIN_S:
+            segs.append([i, j])
+        i = j
+    merged = []
+    for s in segs:
+        if merged and (s[0] - merged[-1][1]) / fps < RISE_GAP:
+            merged[-1][1] = s[1]
+        else:
+            merged.append(s)
+
+    out = []
+    for a, b in merged:
+        sc = float(np.nanmedian(torso[a:b]))
+        net = float(-(com[b - 1, 1] - com[a, 1])) / sc
+
+        # 承重脚：起升时接触且位置更高（y 更小）的那只
+        foot = None
+        cands = [(f, k) for f, k in (("RF", R_ANK), ("LF", L_ANK))
+                 if contacts[f][a] == "contact"]
+        if cands:
+            foot = min(cands, key=lambda c: xy[a, c[1], 1])[0]
+        ank = R_ANK if foot == "RF" else L_ANK if foot == "LF" else None
+
+        def off(m):
+            if ank is None or not np.isfinite(xy[m, ank, 0]) or not np.isfinite(com[m, 0]):
+                return None
+            return float(com[m, 0] - xy[m, ank, 0]) / sc
+
+        # 出手：按位移选，与 detect() 一致
+        end = min(n, b + int(0.4 * fps))
+        which, best, t_hand = None, 0.0, None
+        for H, wi in (("RH", R_WRI), ("LH", L_WRI)):
+            seg = xy[a:end, wi]
+            if not np.isfinite(seg).all():
+                continue
+            disp = np.linalg.norm(seg - seg[0], axis=1)
+            if disp.max() > best:
+                best, which = disp.max(), H
+        if which and best > 0.35 * sc:
+            wi = R_WRI if which == "RH" else L_WRI
+            seg = xy[a:end, wi]
+            disp = np.linalg.norm(seg - seg[0], axis=1)
+            t_hand = (a + int(np.argmax(disp > 0.15 * sc))) / fps
+        else:
+            which = None
+
+        out.append(Rise(a / fps, b / fps, net, which, t_hand,
+                        None if t_hand is None else t_hand - a / fps,
+                        off(a), off(b - 1), foot))
     return out

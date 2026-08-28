@@ -90,9 +90,16 @@ def main():
     pframes, fixed = P.backfill(tracker, frames_bgr, pframes, fps)
     tracker.close()
     pframes = P.smooth(pframes)
+    rel = P.reliability(pframes)
+    wins = P.reliable_windows(rel, fps)
     hit = sum(f.ok for f in pframes)
     print(f"[2/5] 姿态  检出 {hit}/{n} ({hit/n*100:.1f}%)"
           f"    首趟 {hit1} + 补检 {fixed}")
+    print(f"      可信 {int(rel.sum())}/{n} ({rel.mean()*100:.0f}%)"
+          f"    可分析区间 " + ("、".join(f"{a:.1f}–{b:.1f}s" for a, b in wins)
+                              if wins else "无"))
+    if rel.mean() < 0.95:
+        print("      （检出≠可信：肢段朝向镜头或关键点跳变时，角度类结论不成立）")
 
     # ---- 视觉流：岩点 ----
     ref_i = min(args.ref_frame, n - 1)
@@ -125,13 +132,23 @@ def main():
     kp_com = np.array([f.com if f.com else (np.nan, np.nan) for f in pframes])
     ct_seq = {L: [next((c.state for c in e.contacts if c.limb == L), "uncertain")
                   for e in ev] for L in CT.LIMBS}
-    drives = DV.detect(kp_xy, kp_com, ct_seq, fps, wall_H=Hs)
-    stalls = DV.detect_stalls(kp_xy, kp_com, ct_seq, fps, wall_H=Hs)
-    cards = CO.build(stalls, drives)
+    drives = DV.detect(kp_xy, kp_com, ct_seq, fps, wall_H=Hs, reliable=rel)
+    stalls = DV.detect_stalls(kp_xy, kp_com, ct_seq, fps, wall_H=Hs, reliable=rel)
+    rises = DV.detect_rises(kp_xy, kp_com, ct_seq, fps, wall_H=Hs, reliable=rel)
+    cards = [c for c in CO.build(stalls, drives, rises)
+             if float(rel[int(c.t0 * fps):max(int(c.t1 * fps), int(c.t0 * fps) + 1)]
+                      .mean()) >= 0.6]      # 卡片不落在不可信区间上
     print(f"[5/6] 姿态状态  " + "  ".join(
         f"{k}{v}" for k, v in PT.summarise(post).get("状态占比", {}).items())
         + f"    落点计划 {len(plan)} 个    发力事件 {len(drives)} 次"
-        + (f"    高脚停滞 {len(stalls)} 段" if stalls else ""))
+        + (f"    高脚停滞 {len(stalls)} 段" if stalls else "")
+        + (f"    重心上升 {len(rises)} 次" if rises else ""))
+    for k, r in enumerate(rises, 1):
+        print(f"      上升{k} {r.t0:.2f}–{r.t1:.2f}s  净升 {r.net:+.2f} 倍躯干长"
+              + (f"  {CT.LIMB_CN.get(r.hand, r.hand)}出手比起升晚 {r.lead:+.2f}s"
+                 if r.lead is not None else "  出手未检出")
+              + (f"  重心相对承重踝 {r.off_start:+.2f}→{r.off_end:+.2f}"
+                 if r.off_start is not None else ""))
     for k, s in enumerate(stalls, 1):
         print(f"      停滞{k} {DV.SIDE_CN[s.leg]}腿 {s.t0:.1f}–{s.t1:.1f}s  "
               f"膝中位 {s.knee_med:.0f}°  净升 {s.net_rise:+.2f}  "
@@ -166,6 +183,14 @@ def main():
     summ["knowledge_base"] = report
     summ["posture"] = PT.summarise(post)
     summ["landings"] = len(plan)
+    summ["pose_reliable_rate"] = round(float(rel.mean()), 3)
+    summ["analyzable_windows"] = [[round(a, 2), round(b, 2)] for a, b in wins]
+    summ["rises"] = [{"t0": round(r.t0, 2), "t1": round(r.t1, 2),
+                      "net": round(r.net, 2), "hand": r.hand,
+                      "lead_s": None if r.lead is None else round(r.lead, 2),
+                      "off_start": None if r.off_start is None else round(r.off_start, 2),
+                      "off_end": None if r.off_end is None else round(r.off_end, 2),
+                      "foot": r.foot} for r in rises]
     summ["coach_cards"] = CO.summary(cards)
     summ["stalls"] = [{
         "leg": DV.SIDE_CN[s.leg], "t0": round(s.t0, 2), "t1": round(s.t1, 2),
