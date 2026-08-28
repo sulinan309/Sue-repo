@@ -1,0 +1,90 @@
+{
+  "frames": 999,
+  "pose_rate": 0.837,
+  "mean_contacts": 3.07,
+  "stage_frames": {
+    "contact_stabilization": 538,
+    "low_contact_count": 62,
+    "multi_limb_transition": 23,
+    "limb_transport": 203,
+    "transition": 10
+  },
+  "hip_stable_rate": 0.728,
+  "hold_linked_rate": 0.24,
+  "source": {
+    "video": "/root/.claude/uploads/8ef81b05-8bbf-5bfe-8a3b-d370481df9c7/b7c35600-64b1078bc18b28733ecd7cf60b881c3e.mp4",
+    "frames": 999,
+    "fps": 30.0,
+    "size": [
+      720,
+      1280
+    ],
+    "ref_frame": 0,
+    "holds_detected": 17
+  },
+  "knowledge_base": {
+    "implemented_tiers": {
+      "P0": "full",
+      "P1": "partial",
+      "P2": "none",
+      "PX-AUDIO": "none",
+      "P3": "partial",
+      "P4": "none"
+    },
+    "emitted_observables": [
+      {
+        "unit": "PRIN-SPEED-005",
+        "observable": "是否出现长时间停顿后才启动（犹豫）"
+      },
+      {
+        "unit": "FAULT-HESITATE-013",
+        "observable": "单次停顿的时长和全程停顿总时长"
+      },
+      {
+        "unit": "FAULT-REACH-FIRST-005",
+        "observable": "伸手动作与髋部移动的先后顺序"
+      },
+      {
+        "unit": "TEC-POS-COM-001",
+        "observable": "髋部在伸手之前有没有先移动"
+      },
+      {
+        "unit": "PRIN-COM-003",
+        "observable": "髋部的移动路径（髋部是重心最好的视觉代理）"
+      },
+      {
+        "unit": "FAULT-WRONG-HAND-015",
+        "observable": "是否出现同一个岩点上的换手动作"
+      },
+      {
+        "unit": "TEC-POS-TENSION-003",
+        "observable": "伸手的瞬间脚是否脱落"
+      },
+      {
+        "unit": "FAULT-FOOT-CUT-003",
+        "observable": "脚脱落与伸手动作之间的时间关系（是否同步发生）"
+      }
+    ],
+    "not_measured": [
+      "接触力与各接触点的负荷分配",
+      "摩擦系数与鞋底状态",
+      "重心的三维位置（只给二维投影代理）",
+      "髋部到墙面的度量距离（需要墙体坐标系，见 docs/03 的 P4）",
+      "鞋踩在岩点有效受力面还是边缘（需要接触区精细视觉，P3 未完成部分）"
+    ],
+    "evidence_discipline": "所有接触状态为二维视觉邻近代理，不代表力学承重；阶段标签为运动学代理，不构成对稳定性的力学判断。",
+    "kb": {
+      "path": "/home/user/Sue-repo/climbing-kb",
+      "units": 57,
+      "observables_total": 122,
+      "emitted_count": 8,
+      "tier_coverage": {
+        "本管线完整实现档位的条目数": 31,
+        "部分实现档位的条目数": 68,
+        "未实现档位的条目数": 23
+      },
+      "broken_references": "无",
+      "note": "emitted_observables 是本次管线真的产出了证据的条目；其余条目要么需要未实现的能力档位，要么需要跨视频对齐。"
+    }
+  }
+}

@@ -1,15 +1,17 @@
 """覆盖渲染。
 
-信息设计的一条原则：**每个视觉元素都要能说清自己是观察还是推断。**
+信息设计的一条原则：**画面上每一个元素都要挣得它占的位置。**
 
-  橙圈 = 检测到的岩点（视觉流观察）
-  绿圈 = 接触代理已确认（双流融合推断，不是力学接触）
-  黄圈 = 可能接触（证据较弱）
-  青点 = 姿态关键点（姿态流观察）
-  品红 = 2D 质心代理（由关键点推算，不是三维重心）
+第一版把检测到的 27 个岩点全部圈出并编号，结果是画面被编号淹没，
+真正重要的四个接触点反而看不出来。现在只画与判定直接相关的东西：
 
-底部面板固定保留一行「未测量」声明。这不是免责声明，是产品纪律：
-知识库规范 05 节要求表达强度随证据等级变化，看不准就说看不准。
+  绿色粗骨架   姿态流观察
+  绿环 + 标签  该肢端判定为接触（视觉运动学代理，不是力学承重）
+  橙圈         该接触点关联到的岩点（关联不上就不画，不影响接触判定）
+  半透明绿面   支撑面 —— 接触点围出的范围（PHY-EQUILIBRIUM-002）
+  品红点       2D 质心代理
+
+其余检测到的岩点保留在 holds.json 里，不画。
 """
 from __future__ import annotations
 
@@ -24,29 +26,32 @@ FONT = "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"
 FONT_R = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
 
 # BGR
-C_HOLD = (60, 170, 255)      # 橙 —— 岩点
-C_CONF = (90, 230, 90)       # 绿 —— 已确认接触
-C_POSS = (60, 220, 240)      # 黄 —— 可能接触
-C_BONE = (200, 220, 80)      # 青黄 —— 骨架
-C_KP = (240, 220, 120)       # 青 —— 关键点
-C_COM = (220, 60, 220)       # 品红 —— 质心代理
-C_PANEL = (22, 20, 18)
+C_OK = (90, 235, 105)        # 绿 —— 接触 / 骨架
+C_HOLD = (60, 170, 255)      # 橙 —— 关联岩点
+C_MOVE = (80, 150, 255)      # 橙红 —— 移动中的肢体
+C_COM = (225, 70, 225)       # 品红 —— 质心代理
+C_DIM = (150, 150, 150)
+C_PANEL = (20, 18, 16)
 
-STAGE_CN = {
-    "contact_stabilization": "接触稳定",
-    "limb_transport": "单肢转移",
-    "multi_limb_transition": "多肢过渡",
-    "low_contact_count": "接触点不足",
-    "transition": "过渡",
-    "no_pose": "未检出姿态",
+STAGE_TONE = {
+    "contact_stabilization": C_OK,
+    "limb_transport": (110, 200, 255),
+    "multi_limb_transition": (110, 200, 255),
+    "low_contact_count": (110, 190, 250),
+    "transition": (200, 200, 200),
+    "no_pose": C_DIM,
 }
-LAYOUT_CN = {"toward_left": "偏左", "toward_right": "偏右",
-             "centered": "居中", "unknown": "不确定"}
+ACTION_CN = {
+    "contact_stabilization": "身体稳定",
+    "limb_transport": "换手换脚",
+    "multi_limb_transition": "动态调整",
+    "low_contact_count": "接触不足",
+    "transition": "过渡",
+    "no_pose": "未检出",
+}
 
 
 class Text:
-    """PIL 文字渲染，缓存字体。"""
-
     def __init__(self):
         self._c = {}
 
@@ -56,8 +61,11 @@ class Text:
             self._c[k] = ImageFont.truetype(FONT if bold else FONT_R, size)
         return self._c[k]
 
+    def size(self, t, s, bold=True):
+        b = self.font(s, bold).getbbox(t)
+        return b[2] - b[0], b[3] - b[1]
+
     def draw(self, bgr, items):
-        """items: [(x, y, text, size, (b,g,r), bold)]"""
         img = Image.fromarray(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
         d = ImageDraw.Draw(img)
         for x, y, t, s, c, *rest in items:
@@ -66,48 +74,45 @@ class Text:
         return cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
 
 
+def _scale_of(frame) -> float:
+    """用躯干长度决定线宽和标记大小——人在画面里小的时候，
+    固定线宽会把人整个盖住。"""
+    from .pose import L_SHO, R_SHO, L_HIP, R_HIP
+    if not frame.ok:
+        return 1.0
+    try:
+        d = float(np.linalg.norm((frame.xy[L_SHO] + frame.xy[R_SHO]) / 2 -
+                                 (frame.xy[L_HIP] + frame.xy[R_HIP]) / 2))
+    except Exception:
+        return 1.0
+    return float(np.clip(d / 140.0, 0.45, 1.6))     # 140px 是标定基准
+
+
 def draw_frame(bgr, frame, ev, holds_xy, txt: Text, *, meta: dict) -> np.ndarray:
     h, w = bgr.shape[:2]
     out = bgr.copy()
     labels = []
+    k = _scale_of(frame)
+    W = lambda base, lo=1: max(lo, int(round(base * k)))     # 线宽
+    R = lambda base: max(3, int(round(base * k)))            # 半径
+    F = lambda base: max(13, int(round(base * (0.6 + 0.4 * k))))  # 字号
 
-    contacted = {c.hold: c for c in ev.contacts if c.hold and c.state != "none"}
-    legend_box = (w - 160, 8, w, 8 + 24 * 4 + 14)     # 图例占位，标签避开
-
-    def chip(x, y, tw, th, alpha=0.55):
-        """给文字垫一层半透明底，避免落在花墙上看不清。"""
-        x0, y0 = max(0, x - 3), max(0, y - 2)
-        x1, y1 = min(w, x + tw + 3), min(h, y + th + 2)
+    def chip(x, y, tw, th, alpha=0.62):
+        x0, y0 = max(0, x - 7), max(0, y - 4)
+        x1, y1 = min(w, x + tw + 7), min(h, y + th + 6)
         if x1 <= x0 or y1 <= y0:
             return
         roi = out[y0:y1, x0:x1]
         out[y0:y1, x0:x1] = cv2.addWeighted(
-            roi, 1 - alpha, np.full_like(roi, (18, 16, 14), np.uint8), alpha, 0)
+            roi, 1 - alpha, np.full_like(roi, (24, 22, 20), np.uint8), alpha, 0)
 
-    def clear_of_legend(x, y, tw, th):
-        lx0, ly0, lx1, ly1 = legend_box
-        return not (x < lx1 and x + tw > lx0 and y < ly1 and y + th > ly0)
-
-    # ---- 岩点 ----
-    for hid, (x, y) in holds_xy.items():
-        x, y = int(x), int(y)
-        r = int(meta["hold_r"].get(hid, 22))
-        c = contacted.get(hid)
-        if c is None:
-            cv2.circle(out, (x, y), r, C_HOLD, 2, cv2.LINE_AA)
-            lx, ly, tw, th = x + r + 3, y - 9, 34, 18
-            if clear_of_legend(lx, ly, tw, th):
-                chip(lx, ly, tw, th, 0.45)
-                labels.append((lx, ly, hid, 15, C_HOLD, False))
-        else:
-            col = C_CONF if c.state == "confirmed" else C_POSS
-            cv2.circle(out, (x, y), r + 4, col, 3, cv2.LINE_AA)
-            s = f"{hid}·{LIMB_CN[c.limb]}"
-            lx, ly = x + r + 6, y - 22
-            if lx + 90 > w:                      # 右侧放不下就翻到左边
-                lx = max(2, x - r - 96)
-            chip(lx, ly, 88, 22)
-            labels.append((lx, ly, s, 17, col))
+    # ---- 支撑面：接触点围出的范围 ----
+    if len(ev.support) >= 3:
+        poly = np.array(ev.support, np.int32)
+        ov = out.copy()
+        cv2.fillPoly(ov, [poly], (120, 230, 140))
+        out = cv2.addWeighted(ov, 0.18, out, 0.82, 0)
+        cv2.polylines(out, [poly], True, (120, 230, 140), 1, cv2.LINE_AA)
 
     # ---- 骨架 ----
     if frame.ok:
@@ -115,65 +120,88 @@ def draw_frame(bgr, frame, ev, holds_xy, txt: Text, *, meta: dict) -> np.ndarray
             pa, pb = frame.pt(a), frame.pt(b)
             if pa and pb:
                 cv2.line(out, tuple(map(int, pa)), tuple(map(int, pb)),
-                         C_BONE, 2, cv2.LINE_AA)
-        for i in range(33):
+                         (30, 90, 40), W(9, 3), cv2.LINE_AA)  # 深色描边，花墙上也看得清
+                cv2.line(out, tuple(map(int, pa)), tuple(map(int, pb)),
+                         C_OK, W(5, 2), cv2.LINE_AA)
+        for i in (0, 11, 12, 13, 14, 23, 24, 25, 26):       # 只画主要关节
             p = frame.pt(i)
             if p:
-                cv2.circle(out, tuple(map(int, p)), 3, C_KP, -1, cv2.LINE_AA)
+                cv2.circle(out, tuple(map(int, p)), R(5), (70, 190, 240), -1, cv2.LINE_AA)
 
-        # 肢端加粗，并标出运动中的肢体
-        for limb, li in LIMB_POINTS.items():
-            p = frame.pt(li)
-            if not p:
-                continue
-            p = tuple(map(int, p))
-            st = next((c.state for c in ev.contacts if c.limb == limb), "none")
-            col = C_CONF if st == "confirmed" else C_POSS if st == "possible" else (150, 150, 150)
-            cv2.circle(out, p, 8, col, 2, cv2.LINE_AA)
-            if limb in ev.moving_limbs:
-                cv2.circle(out, p, 15, (80, 120, 255), 2, cv2.LINE_AA)
+    # ---- 四个肢端 ----
+    for c in ev.contacts:
+        p = frame.pt(LIMB_POINTS[c.limb]) if frame.ok else None
+        if p is None:
+            continue
+        pi = tuple(map(int, p))
 
-        # 2D 质心代理 + 髋部（知识库指定的重心视觉代理）
-        if frame.hip:
-            hp = tuple(map(int, frame.hip))
-            cv2.drawMarker(out, hp, (255, 200, 80), cv2.MARKER_CROSS, 16, 2, cv2.LINE_AA)
-        if frame.com:
-            cp = tuple(map(int, frame.com))
-            cv2.circle(out, cp, 11, (255, 255, 255), -1, cv2.LINE_AA)
-            cv2.circle(out, cp, 8, C_COM, -1, cv2.LINE_AA)
+        # 关联到的岩点：只画接触中的那些
+        if c.state == "contact" and c.hold and c.hold in holds_xy:
+            hx, hy = map(int, holds_xy[c.hold])
+            r = int(meta["hold_r"].get(c.hold, 24))
+            cv2.circle(out, (hx, hy), r + 3, C_HOLD, W(3, 2), cv2.LINE_AA)
+
+        fs = F(22)
+        if c.state == "contact":
+            cv2.circle(out, pi, R(20), (25, 80, 35), W(7, 3), cv2.LINE_AA)
+            cv2.circle(out, pi, R(20), C_OK, W(4, 2), cv2.LINE_AA)
+            s = f"{LIMB_CN[c.limb]}·接触"
+            col = C_OK
+        elif c.state == "moving":
+            cv2.circle(out, pi, R(18), C_MOVE, W(3, 2), cv2.LINE_AA)
+            s = f"{LIMB_CN[c.limb]}·移动"
+            col = C_MOVE
+        else:
+            cv2.circle(out, pi, R(14), C_DIM, W(2, 1), cv2.LINE_AA)
+            s = None
+            col = C_DIM
+
+        if s:
+            tw, th = txt.size(s, fs)
+            off = R(28)
+            lx = pi[0] + off if pi[0] < w * 0.62 else pi[0] - off - tw
+            ly = pi[1] - th // 2 - 2
+            lx = max(6, min(w - tw - 8, lx))
+            ly = max(6, min(h - th - 8, ly))
+            chip(lx, ly, tw, th)
+            labels.append((lx, ly, s, fs, col))
+
+    # ---- 质心代理 ----
+    if frame.ok and frame.com:
+        cp = tuple(map(int, frame.com))
+        cv2.circle(out, cp, R(17), (255, 255, 255), -1, cv2.LINE_AA)
+        cv2.circle(out, cp, R(13), C_COM, -1, cv2.LINE_AA)
+        cv2.circle(out, cp, R(6), (255, 255, 255), -1, cv2.LINE_AA)
+        s = "重心代理"
+        fs = F(21)
+        tw, th = txt.size(s, fs)
+        lx, ly = cp[0] + R(26), cp[1] - th // 2
+        lx = max(6, min(w - tw - 8, lx))
+        chip(lx, ly, tw, th)
+        labels.append((lx, ly, s, fs, C_COM))
 
     # ---- 底部证据面板 ----
-    ph = 132
-    panel = out[h - ph:, :].copy()
-    out[h - ph:, :] = cv2.addWeighted(panel, 0.25,
-                                      np.full_like(panel, C_PANEL, np.uint8), 0.75, 0)
-    cv2.line(out, (0, h - ph), (w, h - ph), (70, 200, 255), 2)
-
-    stage = STAGE_CN.get(ev.stage, ev.stage)
-    tone = C_CONF if ev.ok else (120, 120, 120)
-    y0 = h - ph + 8
-    labels += [
-        (14, y0, f"攀爬证据  t={ev.t:5.2f}s  帧{ev.idx:03d}", 19, (240, 240, 240)),
-        (14, y0 + 28, f"阶段 {stage}", 21, tone),
-        (150, y0 + 30, f"已确认接触 {ev.confirmed}/4    可能接触 {ev.possible}/4"
-                       f"    {'整体静止' if ev.kinematic_still else '运动中'}", 17, (225, 225, 225)),
-        (14, y0 + 60, f"视觉布局 质心{LAYOUT_CN.get(ev.layout, ev.layout)}"
-                      f"    质心速度 {ev.com_speed:.2f} 躯干长/秒"
-                      + (f"    运动肢体 {'、'.join(LIMB_CN[m] for m in ev.moving_limbs)}"
-                         if ev.moving_limbs else ""), 16, (200, 200, 200), False),
-        (14, y0 + 86, "2D 接触代理｜未测量接触力、负荷分配与髋墙度量距离",
-         16, (120, 190, 250), False),
+    # 按实际行高从下往上排，避免不同字号下互相压行
+    rows = [
+        (f"攀岩动作证据    t={ev.t:05.2f}s    帧 {ev.idx}", 20, (185, 185, 185), False, 10),
+        (ev.headline, 38, STAGE_TONE.get(ev.stage, C_OK) if ev.ok else C_DIM, True, 16),
+        (f"可见接触 {ev.n_contact}/4    |    当前动作：{ACTION_CN.get(ev.stage, '—')}",
+         23, (235, 235, 235), False, 10),
+        ("稳定性代理：" + ("髋部轨迹稳定" if ev.hip_stable else "髋部移动中")
+         + (f"    支撑面 {len(ev.support)} 点" if len(ev.support) >= 3 else ""),
+         23, (235, 235, 235), False, 12),
+        ("接触与重心来自单目视频视觉推断  |  未测量真实受力及负荷分配",
+         19, (135, 195, 250), False, 12),
     ]
+    heights = [txt.size(s, sz, b)[1] + gap for s, sz, _, b, gap in rows]
+    ph = sum(heights) + 18
+    tone = STAGE_TONE.get(ev.stage, C_OK) if ev.ok else C_DIM
+    out[h - ph:, :] = cv2.addWeighted(
+        out[h - ph:, :], 0.12, np.full((ph, w, 3), C_PANEL, np.uint8), 0.88, 0)
+    cv2.line(out, (0, h - ph), (w, h - ph), tone, 3)
 
-    # ---- 右上角图例 ----
-    lg = [("岩点", C_HOLD), ("已确认接触", C_CONF), ("可能接触", C_POSS),
-          ("2D 质心代理", C_COM)]
-    lx0, ly0, lx1, ly1 = legend_box
-    cv2.rectangle(out, (lx0, ly0), (lx1 - 4, ly1), C_PANEL, -1)
-    cv2.rectangle(out, (lx0, ly0), (lx1 - 4, ly1), (60, 60, 60), 1)
-    for i, (name, col) in enumerate(lg):
-        yy = ly0 + 18 + i * 24
-        cv2.circle(out, (lx0 + 14, yy), 7, col, 2, cv2.LINE_AA)
-        labels.append((lx0 + 28, yy - 10, name, 15, col, False))
-
+    yy = h - ph + 12
+    for (s, sz, col, bold, gap), hh in zip(rows, heights):
+        labels.append((22, yy, s, sz, col, bold))
+        yy += hh
     return txt.draw(out, labels)

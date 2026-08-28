@@ -92,7 +92,7 @@ def main():
 
     # ---- 接触代理与阶段 ----
     hr = {hd.id: hd.r for hd in hold_list}
-    ev = CT.stabilise(CT.analyse(pframes, per_frame, fps, hold_r=hr))
+    ev = CT.stabilise(CT.analyse(pframes, per_frame, fps, hold_r=hr, wall_H=Hs))
     summ = CT.summarise(ev)
 
     # ---- 输出 ----
@@ -127,7 +127,7 @@ def main():
 
     print(f"\n耗时 {time.time()-t0:.1f}s   "
           f"姿态检出率 {summ['pose_rate']*100:.1f}%   "
-          f"平均确认接触 {summ.get('mean_confirmed', 0)}/4")
+          f"平均接触点 {summ.get('mean_contacts', 0)}/4")
     print("阶段分布：", summ.get("stage_frames"))
 
 
