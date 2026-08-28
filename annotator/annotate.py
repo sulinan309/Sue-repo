@@ -64,10 +64,13 @@ def main():
     # ---- 姿态流 ----
     tracker = P.PoseTracker(args.model)
     pframes = [tracker(f, i, i / fps) for i, f in enumerate(frames_bgr)]
+    hit1 = sum(f.ok for f in pframes)
+    pframes, fixed = P.backfill(tracker, frames_bgr, pframes, fps)
     tracker.close()
     pframes = P.smooth(pframes)
     hit = sum(f.ok for f in pframes)
-    print(f"[2/5] 姿态  检出 {hit}/{n} ({hit/n*100:.1f}%)")
+    print(f"[2/5] 姿态  检出 {hit}/{n} ({hit/n*100:.1f}%)"
+          f"    首趟 {hit1} + 补检 {fixed}")
 
     # ---- 视觉流：岩点 ----
     ref_i = min(args.ref_frame, n - 1)

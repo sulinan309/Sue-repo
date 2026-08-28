@@ -84,7 +84,16 @@ def _com_2d(xy: np.ndarray, vis: np.ndarray) -> tuple[float, float] | None:
 
 
 class PoseTracker:
-    """ROI 追踪的姿态提取。"""
+    """ROI 追踪的姿态提取。
+
+    重捕获策略很关键。第一版在检测失败时把 ROI 直接置空、下一帧回退到
+    全图原分辨率检测——人只占画幅 1/5 时，缩到模型输入尺寸就太小了，
+    于是「一次丢失 → 全图检测失败 → 继续丢失」形成连锁。
+    实测这让开头 20% 的检出率只有 43.7%，而锁定之后的后 60% 是 100%。
+
+    现在改成：丢失后保留最后已知位置，按 1.6x → 2.6x → 全图 逐级扩大搜索，
+    每一级都上采样到目标分辨率再送检。
+    """
 
     def __init__(self, model_path: str, pad: float = 0.6, min_roi: int = 320,
                  target: int = 640, conf: float = 0.25):
@@ -102,46 +111,72 @@ class PoseTracker:
                 min_tracking_confidence=conf))
         self.pad, self.min_roi, self.target = pad, min_roi, target
         self._roi: tuple[int, int, int, int] | None = None
+        self._last: tuple[int, int, int, int] | None = None   # 丢失后仍保留
+        self._miss = 0
 
-    def _roi_for(self, w: int, h: int) -> tuple[int, int, int, int]:
-        if self._roi is None:
-            return 0, 0, w, h
-        x0, y0, x1, y1 = self._roi
+    def _boxes(self, w: int, h: int) -> list[tuple[int, int, int, int]]:
+        """按优先级给出候选搜索框：跟踪框 → 逐级扩大 → 全图。"""
+        base = self._roi or self._last
+        if base is None:
+            return [(0, 0, w, h)]
+        x0, y0, x1, y1 = base
         cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
-        half = max(x1 - x0, y1 - y0, self.min_roi) * (1 + self.pad) / 2
-        return (max(0, int(cx - half)), max(0, int(cy - half)),
-                min(w, int(cx + half)), min(h, int(cy + half)))
+        side = max(x1 - x0, y1 - y0, self.min_roi)
+        out = []
+        for grow in ((1 + self.pad,) if self._roi else (1.6, 2.6)):
+            half = side * grow / 2
+            out.append((max(0, int(cx - half)), max(0, int(cy - half)),
+                        min(w, int(cx + half)), min(h, int(cy + half))))
+        out.append((0, 0, w, h))
+        return out
 
-    def __call__(self, bgr: np.ndarray, idx: int, t: float) -> Frame:
+    def _detect_in(self, bgr, box, t_ms):
+        """在给定框内检测。返回原图坐标的关键点，或 None。"""
         import cv2
-        h, w = bgr.shape[:2]
-        rx0, ry0, rx1, ry1 = self._roi_for(w, h)
+        rx0, ry0, rx1, ry1 = box
         sub = bgr[ry0:ry1, rx0:rx1]
         if sub.size == 0:
-            self._roi = None
-            return Frame(idx, t, False)
-
-        scale = min(3.0, max(1.0, self.target / max(sub.shape[0], sub.shape[1])))
+            return None
+        scale = min(4.0, max(1.0, self.target / max(sub.shape[0], sub.shape[1])))
         if scale > 1.01:
             sub = cv2.resize(sub, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
-
         img = self._mp.Image(image_format=self._mp.ImageFormat.SRGB,
                              data=cv2.cvtColor(sub, cv2.COLOR_BGR2RGB))
-        res = self._lm.detect_for_video(img, int(t * 1000))
+        res = self._lm.detect_for_video(img, t_ms)
         if not res.pose_landmarks:
-            self._roi = None            # 丢失后下一帧回到全图
-            return Frame(idx, t, False)
-
+            return None
         L = res.pose_landmarks[0]
         sh, sw = sub.shape[:2]
         xy = np.array([[l.x * sw / scale + rx0, l.y * sh / scale + ry0] for l in L])
         vis = np.array([l.visibility for l in L])
+        return xy, vis
 
+    def __call__(self, bgr: np.ndarray, idx: int, t: float,
+                 hint: tuple[int, int, int, int] | None = None) -> Frame:
+        h, w = bgr.shape[:2]
+        boxes = [hint] if hint else self._boxes(w, h)
+        t_ms = int(t * 1000)
+        got = None
+        for k, box in enumerate(boxes):
+            got = self._detect_in(bgr, box, t_ms + k)   # 时间戳须单调递增
+            if got is not None:
+                break
+
+        if got is None:
+            self._roi = None
+            self._miss += 1
+            if self._miss > 45:          # 长时间找不到才丢弃最后位置
+                self._last = None
+            return Frame(idx, t, False)
+
+        xy, vis = got
+        self._miss = 0
         good = vis > 0.3
         if good.sum() >= 6:
             g = xy[good]
             self._roi = (int(g[:, 0].min()), int(g[:, 1].min()),
                          int(g[:, 0].max()), int(g[:, 1].max()))
+            self._last = self._roi
         else:
             self._roi = None
 
@@ -172,3 +207,56 @@ def smooth(frames: list[Frame], win: int = 5) -> list[Frame]:
         if frames[i].vis[L_HIP] > 0.3 and frames[i].vis[R_HIP] > 0.3:
             frames[i].hip = tuple((frames[i].xy[L_HIP] + frames[i].xy[R_HIP]) / 2)
     return frames
+
+
+def backfill(tracker: "PoseTracker", frames_bgr, pf: list[Frame], fps: float,
+             pad: float = 1.0) -> list[Frame]:
+    """第二趟：对丢失帧用前后成功帧插值出的 ROI 重试。
+
+    人是连续运动的，夹在两个成功帧之间的失败帧，位置其实被约束得很好。
+    第一趟按时间顺序推进时用不上「未来」的信息，第二趟可以。
+    """
+    n = len(pf)
+    oks = [i for i, f in enumerate(pf) if f.ok]
+    if len(oks) < 2:
+        return pf
+
+    def box_of(i):
+        g = pf[i].xy[pf[i].vis > 0.3]
+        return (g[:, 0].min(), g[:, 1].min(), g[:, 0].max(), g[:, 1].max())
+
+    import bisect
+    t_ms = int(pf[-1].t * 1000) + 1000      # 从更大的时间戳继续，保持单调
+    fixed = 0
+    for i in range(n):
+        if pf[i].ok:
+            continue
+        j = bisect.bisect_left(oks, i)
+        prev = oks[j - 1] if j > 0 else None
+        nxt = oks[j] if j < len(oks) else None
+        if prev is None and nxt is None:
+            continue
+        if prev is None:
+            bx = box_of(nxt)
+        elif nxt is None:
+            bx = box_of(prev)
+        else:                                # 线性插值
+            a, b = box_of(prev), box_of(nxt)
+            w_ = (i - prev) / (nxt - prev)
+            bx = tuple(a[k] + (b[k] - a[k]) * w_ for k in range(4))
+        cx, cy = (bx[0] + bx[2]) / 2, (bx[1] + bx[3]) / 2
+        half = max(bx[2] - bx[0], bx[3] - bx[1], 200) * (1 + pad) / 2
+        H, W = frames_bgr[i].shape[:2]
+        box = (max(0, int(cx - half)), max(0, int(cy - half)),
+               min(W, int(cx + half)), min(H, int(cy + half)))
+        got = tracker._detect_in(frames_bgr[i], box, t_ms)
+        t_ms += 1
+        if got is None:
+            continue
+        xy, vis = got
+        hip = None
+        if vis[L_HIP] > 0.3 and vis[R_HIP] > 0.3:
+            hip = tuple((xy[L_HIP] + xy[R_HIP]) / 2)
+        pf[i] = Frame(i, pf[i].t, True, xy, vis, _com_2d(xy, vis), hip)
+        fixed += 1
+    return pf, fixed
