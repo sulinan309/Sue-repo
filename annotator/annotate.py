@@ -27,6 +27,7 @@ from climbanno import pose as P
 from climbanno import holds as HD
 from climbanno import contact as CT
 from climbanno import posture as PT
+from climbanno import drive as DV
 from climbanno import render as RD
 from climbanno.kb_link import capability_report
 
@@ -99,9 +100,18 @@ def main():
     ev = CT.stabilise(CT.analyse(pframes, per_frame, fps, hold_r=hr, wall_H=Hs))
     post = PT.analyse(pframes)
     plan = CT.landing_plan(pframes, ev, wall_H=Hs)
+    kp_xy = np.stack([f.xy if f.ok else np.full((33, 2), np.nan) for f in pframes])
+    kp_com = np.array([f.com if f.com else (np.nan, np.nan) for f in pframes])
+    ct_seq = {L: [next((c.state for c in e.contacts if c.limb == L), "uncertain")
+                  for e in ev] for L in CT.LIMBS}
+    drives = DV.detect(kp_xy, kp_com, ct_seq, fps)
     print(f"[5/6] 姿态状态  " + "  ".join(
         f"{k}{v}" for k, v in PT.summarise(post).get("状态占比", {}).items())
-        + f"    落点计划 {len(plan)} 个")
+        + f"    落点计划 {len(plan)} 个    发力事件 {len(drives)} 次")
+    for k, dv in enumerate(drives, 1):
+        print(f"      第{k}次 {DV.SIDE_CN[dv.leg]}腿 {dv.t_drive:5.1f}s  "
+              f"膝 {dv.knee_from:.0f}°→{dv.knee_to:.0f}°  "
+              f"重心升 {dv.com_dy:.0f}px  {dv.chain_cn}")
     summ = CT.summarise(ev)
 
     # ---- 输出 ----
@@ -126,6 +136,15 @@ def main():
     summ["knowledge_base"] = report
     summ["posture"] = PT.summarise(post)
     summ["landings"] = len(plan)
+    summ["drives"] = [{
+        "leg": DV.SIDE_CN[x.leg], "t": round(x.t_drive, 2),
+        "knee": [round(x.knee_from), round(x.knee_to)],
+        "com_rise_px": round(x.com_dy), "com_dx_px": round(x.com_dx),
+        "hand": x.hand, "t_hand": None if x.t_hand is None else round(x.t_hand, 2),
+        "lead_s": None if x.lead is None else round(x.lead, 2),
+        "chain": x.chain, "chain_cn": x.chain_cn,
+        "phases": [{"阶段": a, "时间": b, "证据": c} for a, b, c in DV.describe(x)],
+    } for x in drives]
     (out / "summary.json").write_text(
         json.dumps(summ, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -146,6 +165,7 @@ def main():
                             (lg.land - i) / fps))
             p_ = post[i]
             meta = {"hold_r": hr, "next_landings": nxt,
+                    "drive": DV.phase_at(drives, i / fps),
                     "posture_cn": p_.state_cn, "orient": p_.orient,
                     "eL": p_.elbow_l, "eR": p_.elbow_r,
                     "posture_col": POST_COL.get(p_.state, (235, 235, 235))}

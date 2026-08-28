@@ -237,6 +237,30 @@ def draw_frame(bgr, frame, ev, holds_xy, txt: Text, *, meta: dict) -> np.ndarray
         chip(lx, ly, tw, th)
         labels.append((lx, ly, s, fs, C_COM))
 
+    # ---- 发力事件横幅 ----
+    dv = meta.get("drive")
+    if dv:
+        PH_COL = {"load": (110, 200, 255), "drive": (90, 235, 105),
+                  "reach": (255, 190, 90), "settle": (200, 200, 200)}
+        col = PH_COL.get(dv["phase"], (235, 235, 235))
+        head = f"第{dv['n']}次发力 · {dv['leg']}腿 · {dv['phase_cn']}"
+        sub = f"膝 {dv['knee'][0]:.0f}°→{dv['knee'][1]:.0f}°   重心升 {dv['rise']:.0f}px"
+        if dv["lead"] is not None:
+            sub += f"   出手比起升晚 {dv['lead']:+.2f}s"
+        fh, fs2 = F(26), F(18)
+        tw1, th1 = txt.size(head, fh)
+        tw2, th2 = txt.size(sub, fs2)
+        bw = max(tw1, tw2) + 28
+        bh = th1 + th2 + 24
+        bx, by = 16, 16
+        ov = out.copy()
+        cv2.rectangle(ov, (bx, by), (bx + bw, by + bh), C_PANEL, -1)
+        out = cv2.addWeighted(ov, 0.86, out, 0.14, 0)
+        cv2.rectangle(out, (bx, by), (bx + bw, by + bh), col, 2)
+        cv2.rectangle(out, (bx, by), (bx + 5, by + bh), col, -1)
+        labels.append((bx + 14, by + 8, head, fh, col))
+        labels.append((bx + 14, by + 12 + th1, sub, fs2, (215, 215, 215), False))
+
     # ---- 底部证据面板 ----
     # 按实际行高从下往上排，避免不同字号下互相压行
     rows = [
