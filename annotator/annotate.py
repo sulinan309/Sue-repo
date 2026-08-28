@@ -28,6 +28,7 @@ from climbanno import holds as HD
 from climbanno import contact as CT
 from climbanno import posture as PT
 from climbanno import drive as DV
+from climbanno import coach as CO
 from climbanno import render as RD
 from climbanno.kb_link import capability_report
 
@@ -39,6 +40,8 @@ def main():
     ap.add_argument("--model", default="pose_landmarker_full.task")
     ap.add_argument("--ref-frame", type=int, default=0, help="用哪一帧检测岩点")
     ap.add_argument("--no-video", action="store_true", help="只跑分析不出视频")
+    ap.add_argument("--debug", action="store_true",
+                    help="显示工程遥测面板（默认是面向用户的教练卡片）")
     ap.add_argument("--range", default=None, metavar="起:止",
                     help="只分析这一段（秒），例如 0:8.6")
     ap.add_argument("--samples", type=int, default=14, help="岩点检测采样帧数")
@@ -124,6 +127,7 @@ def main():
                   for e in ev] for L in CT.LIMBS}
     drives = DV.detect(kp_xy, kp_com, ct_seq, fps, wall_H=Hs)
     stalls = DV.detect_stalls(kp_xy, kp_com, ct_seq, fps, wall_H=Hs)
+    cards = CO.build(stalls, drives)
     print(f"[5/6] 姿态状态  " + "  ".join(
         f"{k}{v}" for k, v in PT.summarise(post).get("状态占比", {}).items())
         + f"    落点计划 {len(plan)} 个    发力事件 {len(drives)} 次"
@@ -162,6 +166,7 @@ def main():
     summ["knowledge_base"] = report
     summ["posture"] = PT.summarise(post)
     summ["landings"] = len(plan)
+    summ["coach_cards"] = CO.summary(cards)
     summ["stalls"] = [{
         "leg": DV.SIDE_CN[s.leg], "t0": round(s.t0, 2), "t1": round(s.t1, 2),
         "knee_med": round(s.knee_med), "knee_max": round(s.knee_max),
@@ -202,6 +207,8 @@ def main():
             p_ = post[i]
             meta = {"hold_r": hr, "next_landings": nxt,
                     "drive": DV.phase_at(drives, i / fps),
+                    "debug": args.debug,
+                    "card": CO.card_at(cards, i / fps),
                     "stall": next((s for s in stalls
                                    if s.t0 <= i / fps <= s.t1), None),
                     "ankle": (lambda a: (float(a[0]), float(a[1]))
@@ -220,6 +227,12 @@ def main():
     else:
         print("[6/6] 跳过视频渲染")
 
+    if cards:
+        print("\n教练卡片：")
+        for c in cards:
+            print(f"  [{c.t0:.1f}–{c.t1:.1f}s] {c.title}   {c.sub}")
+            for x in c.todo:
+                print(f"      → {x}")
     print(f"\n耗时 {time.time()-t0:.1f}s   "
           f"姿态检出率 {summ['pose_rate']*100:.1f}%   "
           f"平均接触点 {summ.get('mean_contacts', 0)}/4")

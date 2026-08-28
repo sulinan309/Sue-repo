@@ -101,7 +101,7 @@ def draw_frame(bgr, frame, ev, holds_xy, txt: Text, *, meta: dict) -> np.ndarray
 
     # 底部证据面板占位：标签不能放进去。面板高度稍后才算得出，
     # 这里按最大可能高度预留。
-    PANEL_RESERVE = 200
+    PANEL_RESERVE = 200 if meta.get("debug") else 72
     placed: list[tuple[int, int, int, int]] = [(0, h - PANEL_RESERVE, w, h)]
 
     def _hit(r):
@@ -256,57 +256,85 @@ def draw_frame(bgr, frame, ev, holds_xy, txt: Text, *, meta: dict) -> np.ndarray
         # 重心到铅垂线的水平差
         cv2.arrowedLine(out, (cx, cy), (ax, cy), warn, W(3, 2), cv2.LINE_AA,
                         tipLength=0.18)
-        s = f"重心偏离承重脚 {abs(stl.offset_med):.2f} 倍躯干长"
+        s = ("重心还没送到脚的正上方" if not meta.get("debug")
+             else f"重心偏离承重脚 {abs(stl.offset_med):.2f} 倍躯干长")
         fsz = F(19)
         tw, th = txt.size(s, fsz)
         lx, ly = place((cx + ax) // 2, cy - R(18), tw, th, R(10), cx < w * 0.6)
         chip(lx, ly, tw, th, 0.72)
         labels.append((lx, ly, s, fsz, warn))
 
-    # ---- 发力事件横幅 ----
-    dv = meta.get("drive")
-    if stl is not None:
-        head = f"高脚停滞 · {SIDE_CN_R[stl.leg]}腿 · {stl.t1 - stl.t0:.1f}s 未站起"
-        subs = [c[0] for c in stl.candidates()[:3]]
-        fh, fs2 = F(25), F(17)
-        tw1, th1 = txt.size(head, fh)
-        sizes = [txt.size(x, fs2) for x in subs]
-        bw = max([tw1] + [s0[0] for s0 in sizes]) + 28
-        bh = th1 + sum(s0[1] + 7 for s0 in sizes) + 26
-        ov = out.copy()
-        cv2.rectangle(ov, (16, 16), (16 + bw, 16 + bh), C_PANEL, -1)
-        out = cv2.addWeighted(ov, 0.88, out, 0.12, 0)
-        col = (90, 160, 255)
-        cv2.rectangle(out, (16, 16), (16 + bw, 16 + bh), col, 2)
-        cv2.rectangle(out, (16, 16), (21, 16 + bh), col, -1)
-        labels.append((30, 24, head, fh, col))
-        yy = 24 + th1 + 10
-        for s0, (sw0, sh0) in zip(subs, sizes):
-            labels.append((30, yy, "· " + s0, fs2, (215, 215, 215), False))
-            yy += sh0 + 7
-    elif dv:
-        PH_COL = {"load": (110, 200, 255), "drive": (90, 235, 105),
-                  "reach": (255, 190, 90), "settle": (200, 200, 200)}
-        col = PH_COL.get(dv["phase"], (235, 235, 235))
-        head = f"第{dv['n']}次发力 · {dv['leg']}腿 · {dv['phase_cn']}"
-        sub = f"膝 {dv['knee'][0]:.0f}°→{dv['knee'][1]:.0f}°   重心升 {dv['rise']:.0f}px"
-        if dv["lead"] is not None:
-            sub += f"   出手比起升晚 {dv['lead']:+.2f}s"
-        fh, fs2 = F(26), F(18)
-        tw1, th1 = txt.size(head, fh)
-        tw2, th2 = txt.size(sub, fs2)
-        bw = max(tw1, tw2) + 28
-        bh = th1 + th2 + 24
-        bx, by = 16, 16
-        ov = out.copy()
-        cv2.rectangle(ov, (bx, by), (bx + bw, by + bh), C_PANEL, -1)
-        out = cv2.addWeighted(ov, 0.86, out, 0.14, 0)
-        cv2.rectangle(out, (bx, by), (bx + bw, by + bh), col, 2)
-        cv2.rectangle(out, (bx, by), (bx + 5, by + bh), col, -1)
-        labels.append((bx + 14, by + 8, head, fh, col))
-        labels.append((bx + 14, by + 12 + th1, sub, fs2, (215, 215, 215), False))
+    # ---- 教练卡片 ----
+    # 放在画面上方的空墙区，不压住动作。
+    # 只在有话可说时出现——卡片的出现本身就是信号。
+    card = meta.get("card")
+    if card and not meta.get("debug"):
+        good = card.title.endswith("做对了")
+        acc = (120, 230, 140) if good else (95, 170, 255)
+        pad, gap = 18, 7
+        fs_title, fs_sub, fs_body, fs_lbl = F(30), F(18), F(20), F(17)
 
-    # ---- 底部证据面板 ----
+        def wrap(s, size, maxw):
+            out_, cur = [], ""
+            for ch in s:
+                if txt.size(cur + ch, size, False)[0] > maxw:
+                    out_.append(cur)
+                    cur = ch
+                else:
+                    cur += ch
+            if cur:
+                out_.append(cur)
+            return out_
+
+        maxw = w - 2 * 20 - 2 * pad - 14
+        lines = [(card.title, fs_title, (250, 250, 250), True)]
+        lines.append((card.sub, fs_sub, (198, 198, 198), False))
+        for wline in card.why[:2]:
+            for seg in wrap(wline, fs_body, maxw):
+                lines.append((seg, fs_body, (228, 228, 228), False))
+        if card.todo:
+            lines.append(("下次这样试", fs_lbl, acc, True))
+            for k, td in enumerate(card.todo[:3], 1):
+                for m, seg in enumerate(wrap(td.rstrip("。"), fs_body, maxw - 26)):
+                    lines.append(((f"{k}  " if m == 0 else "    ") + seg,
+                                  fs_body, (250, 250, 250), False))
+
+        hs = [txt.size(s, sz, b)[1] for s, sz, _c, b in lines]
+        bh = sum(hs) + gap * (len(lines) - 1) + 2 * pad
+        bw = w - 40
+        bx, by = 20, 18
+        ov = out.copy()
+        cv2.rectangle(ov, (bx, by), (bx + bw, by + bh), (16, 15, 14), -1)
+        out = cv2.addWeighted(ov, 0.9, out, 0.1, 0)
+        cv2.rectangle(out, (bx, by), (bx + bw, by + bh), acc, 2)
+        cv2.rectangle(out, (bx, by), (bx + 7, by + bh), acc, -1)
+        placed.append((bx - 6, by - 6, bx + bw + 6, by + bh + 6))
+        yy = by + pad
+        for (s, sz, c, b), hh in zip(lines, hs):
+            labels.append((bx + pad + 8, yy, s, sz, c, b))
+            yy += hh + gap
+
+    # ---- 底部信息条 ----
+    if not meta.get("debug"):
+        # 用户模式只保留一行：时间、接触数，以及那句不能省的边界声明。
+        # 原来的遥测面板（朝向比、支撑面点数、稳定性代理…）占了 200 像素、
+        # 挡住动作，而那些数字对用户没有意义——它们进 debug 模式。
+        s = (f"{ev.t:05.2f}s   接触 {ev.n_contact}/4"
+             + (f"   {meta.get('posture_cn')}" if meta.get("posture_cn") else "")
+             + "      单目视频推断，未测受力")
+        fsz = 17                      # 固定字号：这一条是脚注，不该随人体缩放
+        while txt.size(s, fsz, False)[0] > w - 40 and fsz > 12:
+            fsz -= 1
+        th0 = txt.size(s, fsz, False)[1]
+        ph0 = th0 + 22
+        out[h - ph0:, :] = cv2.addWeighted(
+            out[h - ph0:, :], 0.12,
+            np.full((ph0, w, 3), C_PANEL, np.uint8), 0.88, 0)
+        cv2.line(out, (0, h - ph0), (w, h - ph0),
+                 STAGE_TONE.get(ev.stage, C_OK) if ev.ok else C_DIM, 2)
+        labels.append((20, h - ph0 + 10, s, fsz, (205, 205, 205), False))
+        return txt.draw(out, labels)
+
     # 按实际行高从下往上排，避免不同字号下互相压行
     rows = [
         (f"攀岩动作证据    t={ev.t:05.2f}s    帧 {ev.idx}", 20, (185, 185, 185), False, 10),
