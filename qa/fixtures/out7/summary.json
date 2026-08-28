@@ -1,0 +1,219 @@
+{
+  "frames": 95,
+  "pose_rate": 1.0,
+  "mean_contacts": 2.06,
+  "stage_frames": {
+    "low_contact_count": 26,
+    "contact_stabilization": 32,
+    "limb_transport": 24,
+    "multi_limb_transition": 1,
+    "transition": 12
+  },
+  "hip_stable_rate": 0.232,
+  "hold_linked_rate": 0.297,
+  "source": {
+    "video": "/root/.claude/uploads/8ef81b05-8bbf-5bfe-8a3b-d370481df9c7/82a02e78-e4390810db637855dbe4eb414280f2c8.mp4",
+    "frames": 95,
+    "fps": 30.0,
+    "size": [
+      720,
+      1184
+    ],
+    "ref_frame": 0,
+    "holds_detected": 13
+  },
+  "knowledge_base": {
+    "implemented_tiers": {
+      "P0": "full",
+      "P1": "partial",
+      "P2": "none",
+      "PX-AUDIO": "none",
+      "P3": "partial",
+      "P4": "none"
+    },
+    "emitted_observables": [
+      {
+        "unit": "PRIN-SPEED-005",
+        "observable": "是否出现长时间停顿后才启动（犹豫）"
+      },
+      {
+        "unit": "FAULT-HESITATE-013",
+        "observable": "单次停顿的时长和全程停顿总时长"
+      },
+      {
+        "unit": "FAULT-REACH-FIRST-005",
+        "observable": "伸手动作与髋部移动的先后顺序"
+      },
+      {
+        "unit": "TEC-POS-COM-001",
+        "observable": "髋部在伸手之前有没有先移动"
+      },
+      {
+        "unit": "PRIN-COM-003",
+        "observable": "髋部的移动路径（髋部是重心最好的视觉代理）"
+      },
+      {
+        "unit": "FAULT-WRONG-HAND-015",
+        "observable": "是否出现同一个岩点上的换手动作"
+      },
+      {
+        "unit": "TEC-POS-TENSION-003",
+        "observable": "伸手的瞬间脚是否脱落"
+      },
+      {
+        "unit": "FAULT-FOOT-CUT-003",
+        "observable": "脚脱落与伸手动作之间的时间关系（是否同步发生）"
+      }
+    ],
+    "not_measured": [
+      "接触力与各接触点的负荷分配",
+      "摩擦系数与鞋底状态",
+      "重心的三维位置（只给二维投影代理）",
+      "髋部到墙面的度量距离（需要墙体坐标系，见 docs/03 的 P4）",
+      "鞋踩在岩点有效受力面还是边缘（需要接触区精细视觉，P3 未完成部分）"
+    ],
+    "evidence_discipline": "所有接触状态为二维视觉邻近代理，不代表力学承重；阶段标签为运动学代理，不构成对稳定性的力学判断。",
+    "kb": {
+      "path": "/home/user/Sue-repo/climbing-kb",
+      "units": 57,
+      "observables_total": 127,
+      "emitted_count": 8,
+      "tier_coverage": {
+        "本管线完整实现档位的条目数": 35,
+        "部分实现档位的条目数": 69,
+        "未实现档位的条目数": 23
+      },
+      "broken_references": "无",
+      "note": "emitted_observables 是本次管线真的产出了证据的条目；其余条目要么需要未实现的能力档位，要么需要跨视频对齐。"
+    }
+  },
+  "posture": {
+    "状态占比": {
+      "正身支撑": "64%",
+      "正身拉臂": "19%",
+      "转体过渡": "11%",
+      "侧身省力": "6%"
+    },
+    "朝向比中位": 0.85
+  },
+  "landings": 9,
+  "pose_reliable_rate": 0.853,
+  "analyzable_windows": [
+    [
+      0.9,
+      3.17
+    ]
+  ],
+  "rises": [
+    {
+      "t0": 0.9,
+      "t1": 2.13,
+      "net": 0.8,
+      "hand": "RH",
+      "lead_s": 0.13,
+      "off_start": 0.18,
+      "off_end": 0.13,
+      "foot": "LF"
+    },
+    {
+      "t0": 2.7,
+      "t1": 3.13,
+      "net": 0.19,
+      "hand": null,
+      "lead_s": null,
+      "off_start": 0.31,
+      "off_end": 0.16,
+      "foot": "LF"
+    }
+  ],
+  "coach_cards": [
+    {
+      "时间": "0.9–2.6s",
+      "标题": "这次发力做对了",
+      "上下文": "身体上升 0.80 个躯干长 · 腿先蹬、手后出",
+      "为什么": [
+        "右手比身体起升晚 0.13 秒——腿先把身体送上去，手是去接下一个点，不是去拉",
+        "起升时重心已经在左脚的上方（偏移 0.18 倍躯干长），蹬出去的力才真正用在往上",
+        "整个上升过程中重心还在继续往左脚上方收拢（0.18 → 0.13）"
+      ],
+      "下次这样试": [],
+      "练习任务": null,
+      "依据": [
+        "PHY-KCHAIN-006",
+        "PRIN-LEGS-004"
+      ]
+    }
+  ],
+  "stalls": [],
+  "drives": [
+    {
+      "leg": "左",
+      "t": 0.63,
+      "knee": [
+        149,
+        177
+      ],
+      "com_rise_px": 185,
+      "com_dx_px": 75,
+      "hand": "RH",
+      "t_hand": 0.8,
+      "lead_s": 0.1,
+      "chain": "leg_first",
+      "chain_cn": "腿先蹬·动作链完整",
+      "phases": [
+        {
+          "阶段": "蓄力",
+          "时间": "0.6–0.6s",
+          "证据": "左膝屈至 149°，在左腿上建立发力空间"
+        },
+        {
+          "阶段": "蹬起",
+          "时间": "0.6–1.3s",
+          "证据": "左膝 149°→177°，重心上升 185px、横移 +75px"
+        },
+        {
+          "阶段": "出手",
+          "时间": "0.8s",
+          "证据": "右手离开原岩点，比重心起升晚 +0.10s"
+        },
+        {
+          "阶段": "接点稳定",
+          "时间": "1.3s 之后",
+          "证据": "腿先蹬·动作链完整"
+        }
+      ]
+    },
+    {
+      "leg": "右",
+      "t": 1.5,
+      "knee": [
+        140,
+        162
+      ],
+      "com_rise_px": 62,
+      "com_dx_px": -24,
+      "hand": null,
+      "t_hand": null,
+      "lead_s": null,
+      "chain": "unclear",
+      "chain_cn": "时序看不准",
+      "phases": [
+        {
+          "阶段": "蓄力",
+          "时间": "1.2–1.5s",
+          "证据": "右膝屈至 140°，在右腿上建立发力空间"
+        },
+        {
+          "阶段": "蹬起",
+          "时间": "1.5–2.1s",
+          "证据": "右膝 140°→162°，重心上升 62px、横移 -24px"
+        },
+        {
+          "阶段": "接点稳定",
+          "时间": "2.1s 之后",
+          "证据": "时序看不准"
+        }
+      ]
+    }
+  ]
+}

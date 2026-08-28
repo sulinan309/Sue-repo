@@ -1,0 +1,34 @@
+{
+  "out5/evidence.jsonl": {
+    "bytes": 270595,
+    "sha256": "34303c625647370052095ee7347e596bb9f6695cdc3905a0bb2c25e07c99c982"
+  },
+  "out5/holds.json": {
+    "bytes": 853,
+    "sha256": "93b6f57cea60afef6c97c8219af2f6e02b7379a5db898dacd6b7b14521f56fef"
+  },
+  "out5/keypoints.npz": {
+    "bytes": 105358,
+    "sha256": "8ff4d93cda8087cdb1a999f29890e2f399f11577e17f8eba3d53694229f875f6"
+  },
+  "out5/summary.json": {
+    "bytes": 10914,
+    "sha256": "d39f3b16081c475b19fcbab400a1d939c121ba88d6512debb6b35a5df73e8604"
+  },
+  "out7/evidence.jsonl": {
+    "bytes": 98415,
+    "sha256": "e775f495920711e303bcbf40248777c606f1f9d37b634176542a65762a45aa60"
+  },
+  "out7/holds.json": {
+    "bytes": 1860,
+    "sha256": "67ca36c8a9d737585d404ec860428dafa397ccb37622c9ec1e3b10ade67b0368"
+  },
+  "out7/keypoints.npz": {
+    "bytes": 40940,
+    "sha256": "f1a1117d66311f89feec23cc125a066b30e762aa67f5bc2551db4b4c7f087b08"
+  },
+  "out7/summary.json": {
+    "bytes": 5918,
+    "sha256": "8f1b772cc49d9e78ecf41c5580a54dd038ba56dbe95162d74231f792d3469d27"
+  }
+}

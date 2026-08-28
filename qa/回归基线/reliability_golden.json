@@ -1,0 +1,18 @@
+{
+  "out5": {
+    "L_ELBOW": 0.26,
+    "L_KNEE": 0.961,
+    "R_ELBOW": 0.903,
+    "R_KNEE": 0.787,
+    "_unreliable_L": 0.07,
+    "_unreliable_R": 0.136
+  },
+  "out7": {
+    "L_ELBOW": 0.389,
+    "L_KNEE": 0.789,
+    "R_ELBOW": 0.842,
+    "R_KNEE": 0.516,
+    "_unreliable_L": 0.221,
+    "_unreliable_R": 0.421
+  }
+}
