@@ -26,6 +26,7 @@ import numpy as np
 from climbanno import pose as P
 from climbanno import holds as HD
 from climbanno import contact as CT
+from climbanno import posture as PT
 from climbanno import render as RD
 from climbanno.kb_link import capability_report
 
@@ -96,6 +97,11 @@ def main():
     # ---- 接触代理与阶段 ----
     hr = {hd.id: hd.r for hd in hold_list}
     ev = CT.stabilise(CT.analyse(pframes, per_frame, fps, hold_r=hr, wall_H=Hs))
+    post = PT.analyse(pframes)
+    plan = CT.landing_plan(pframes, ev, wall_H=Hs)
+    print(f"[5/6] 姿态状态  " + "  ".join(
+        f"{k}{v}" for k, v in PT.summarise(post).get("状态占比", {}).items())
+        + f"    落点计划 {len(plan)} 个")
     summ = CT.summarise(ev)
 
     # ---- 输出 ----
@@ -118,21 +124,37 @@ def main():
                       "size": [w, h], "ref_frame": ref_i,
                       "holds_detected": len(hold_list)}
     summ["knowledge_base"] = report
+    summ["posture"] = PT.summarise(post)
+    summ["landings"] = len(plan)
     (out / "summary.json").write_text(
         json.dumps(summ, ensure_ascii=False, indent=2), encoding="utf-8")
 
     if not args.no_video:
-        meta = {"hold_r": {hd.id: hd.r for hd in hold_list}}
         txt = RD.Text()
+        POST_COL = {"frontal_straight": (120, 230, 140), "frontal_bent": (110, 190, 250),
+                    "side_straight": (120, 230, 140), "side_bent": (110, 190, 250),
+                    "transition": (200, 200, 200), "unknown": (150, 150, 150)}
         vw = cv2.VideoWriter(str(out / "annotated.mp4"),
                              cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
         for i in range(n):
+            nxt = []
+            for lg in CT.next_landings(plan, i, 2):
+                pt = cv2.perspectiveTransform(
+                    np.array(lg.wall_xy, np.float32).reshape(1, 1, 2), Hs[i]
+                ).reshape(2) if Hs[i] is not None else np.array(lg.wall_xy)
+                nxt.append((lg.limb, (float(pt[0]), float(pt[1])),
+                            (lg.land - i) / fps))
+            p_ = post[i]
+            meta = {"hold_r": hr, "next_landings": nxt,
+                    "posture_cn": p_.state_cn, "orient": p_.orient,
+                    "eL": p_.elbow_l, "eR": p_.elbow_r,
+                    "posture_col": POST_COL.get(p_.state, (235, 235, 235))}
             vw.write(RD.draw_frame(frames_bgr[i], pframes[i], ev[i],
                                    per_frame[i], txt, meta=meta))
         vw.release()
-        print(f"[5/5] 已写出 {out/'annotated.mp4'}")
+        print(f"[6/6] 已写出 {out/'annotated.mp4'}")
     else:
-        print("[5/5] 跳过视频渲染")
+        print("[6/6] 跳过视频渲染")
 
     print(f"\n耗时 {time.time()-t0:.1f}s   "
           f"姿态检出率 {summ['pose_rate']*100:.1f}%   "

@@ -97,6 +97,36 @@ def draw_frame(bgr, frame, ev, holds_xy, txt: Text, *, meta: dict) -> np.ndarray
     R = lambda base: max(3, int(round(base * k)))            # 半径
     F = lambda base: max(13, int(round(base * (0.6 + 0.4 * k))))  # 字号
 
+    placed: list[tuple[int, int, int, int]] = []
+
+    def _hit(r):
+        for q in placed:
+            if not (r[2] < q[0] or r[0] > q[2] or r[3] < q[1] or r[1] > q[3]):
+                return True
+        return False
+
+    def place(ax, ay, tw, th, rad, prefer_right=True):
+        """在锚点周围找一个不与已放标签重叠的位置。"""
+        d = rad + R(12)
+        cands = []
+        for side in ((1, -1) if prefer_right else (-1, 1)):
+            for dy in (0, -1, 1, -2, 2):
+                x = ax + d if side > 0 else ax - d - tw
+                cands.append((x, ay - th // 2 + dy * (th + 6)))
+        for dy in (-1, 1):                      # 兜底：正上/正下
+            cands.append((ax - tw // 2, ay + dy * (rad + th + 10)))
+        for x, y in cands:
+            x = max(6, min(w - tw - 8, int(x)))
+            y = max(6, min(h - th - 8, int(y)))
+            r = (x - 7, y - 4, x + tw + 7, y + th + 6)
+            if not _hit(r):
+                placed.append(r)
+                return x, y
+        x = max(6, min(w - tw - 8, int(ax + d)))
+        y = max(6, min(h - th - 8, int(ay - th // 2)))
+        placed.append((x - 7, y - 4, x + tw + 7, y + th + 6))
+        return x, y
+
     def chip(x, y, tw, th, alpha=0.62):
         x0, y0 = max(0, x - 7), max(0, y - 4)
         x1, y1 = min(w, x + tw + 7), min(h, y + th + 6)
@@ -135,12 +165,6 @@ def draw_frame(bgr, frame, ev, holds_xy, txt: Text, *, meta: dict) -> np.ndarray
             continue
         pi = tuple(map(int, p))
 
-        # 关联到的岩点：只画接触中的那些
-        if c.state == "contact" and c.hold and c.hold in holds_xy:
-            hx, hy = map(int, holds_xy[c.hold])
-            r = int(meta["hold_r"].get(c.hold, 24))
-            cv2.circle(out, (hx, hy), r + 3, C_HOLD, W(3, 2), cv2.LINE_AA)
-
         fs = F(22)
         if c.state == "contact":
             cv2.circle(out, pi, R(20), (25, 80, 35), W(7, 3), cv2.LINE_AA)
@@ -158,13 +182,46 @@ def draw_frame(bgr, frame, ev, holds_xy, txt: Text, *, meta: dict) -> np.ndarray
 
         if s:
             tw, th = txt.size(s, fs)
-            off = R(28)
-            lx = pi[0] + off if pi[0] < w * 0.62 else pi[0] - off - tw
-            ly = pi[1] - th // 2 - 2
-            lx = max(6, min(w - tw - 8, lx))
-            ly = max(6, min(h - th - 8, ly))
+            lx, ly = place(pi[0], pi[1], tw, th, R(20), pi[0] < w * 0.62)
             chip(lx, ly, tw, th)
             labels.append((lx, ly, s, fs, col))
+
+    # ---- 接下来的两个落点（回放视角，不是预测）----
+    nx = meta.get("next_landings") or []
+    limb_now = {c.limb: frame.pt(LIMB_POINTS[c.limb]) for c in ev.contacts} if frame.ok else {}
+    for rank, (lm, pos, dt) in enumerate(nx[:2]):
+        px, py = int(pos[0]), int(pos[1])
+        cur0 = limb_now.get(lm)
+        if cur0 and np.linalg.norm(np.array(cur0) - np.array([px, py])) < R(26):
+            continue                            # 落点已到，不必再提示
+        first = rank == 0
+        col = (70, 210, 255) if first else (120, 170, 190)
+        rad = R(26 if first else 19)
+        # 目标环 + 十字准星
+        cv2.circle(out, (px, py), rad, (20, 40, 60), W(7, 3), cv2.LINE_AA)
+        cv2.circle(out, (px, py), rad, col, W(4, 2), cv2.LINE_AA)
+        cv2.line(out, (px - rad - R(8), py), (px - rad + R(3), py), col, W(3, 2), cv2.LINE_AA)
+        cv2.line(out, (px + rad - R(3), py), (px + rad + R(8), py), col, W(3, 2), cv2.LINE_AA)
+        cv2.line(out, (px, py - rad - R(8)), (px, py - rad + R(3)), col, W(3, 2), cv2.LINE_AA)
+        cv2.line(out, (px, py + rad - R(3)), (px, py + rad + R(8)), col, W(3, 2), cv2.LINE_AA)
+        # 第一个落点画一条虚线，从当前肢端指过去
+        cur = limb_now.get(lm)
+        if first and cur:
+            a = np.array(cur, float); b = np.array([px, py], float)
+            L_ = np.linalg.norm(b - a)
+            if L_ > 12:
+                d = (b - a) / L_
+                for s0 in range(int(rad + 6), int(L_ - rad), 22):
+                    p1 = b - d * s0
+                    p2 = b - d * min(s0 + 11, L_ - rad)
+                    cv2.line(out, tuple(p1.astype(int)), tuple(p2.astype(int)),
+                             col, W(2, 1), cv2.LINE_AA)
+        s = f"{'①' if first else '②'} {LIMB_CN[lm]}落点 {dt:.1f}s"
+        fsz = F(21 if first else 18)
+        tw, th = txt.size(s, fsz)
+        lx, ly = place(px, py, tw, th, rad, px < w * 0.6)
+        chip(lx, ly, tw, th, 0.7)
+        labels.append((lx, ly, s, fsz, col))
 
     # ---- 质心代理 ----
     if frame.ok and frame.com:
@@ -189,8 +246,13 @@ def draw_frame(bgr, frame, ev, holds_xy, txt: Text, *, meta: dict) -> np.ndarray
          23, (235, 235, 235), False, 10),
         ("稳定性代理：" + ("髋部轨迹稳定" if ev.hip_stable else "髋部移动中")
          + (f"    支撑面 {len(ev.support)} 点" if len(ev.support) >= 3 else ""),
-         23, (235, 235, 235), False, 12),
-        ("接触与重心来自单目视频视觉推断  |  未测量真实受力及负荷分配",
+         23, (235, 235, 235), False, 10),
+        ("姿态：" + meta.get("posture_cn", "—")
+         + (f"    朝向比 {meta['orient']:.2f}" if meta.get("orient") is not None else "")
+         + (f"    肘 L{meta['eL']:.0f}° R{meta['eR']:.0f}°"
+            if meta.get("eL") is not None else ""),
+         23, meta.get("posture_col", (235, 235, 235)), False, 12),
+        ("落点为回放已知的实际落点，非实时预测  |  姿态为位置观察，未测量发力",
          19, (135, 195, 250), False, 12),
     ]
     heights = [txt.size(s, sz, b)[1] + gap for s, sz, _, b, gap in rows]

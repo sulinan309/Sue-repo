@@ -283,3 +283,64 @@ def summarise(ev: list[Evidence]) -> dict:
         "hold_linked_rate": round(
             float(np.mean([sum(c.hold is not None for c in e.contacts) / 4 for e in ok])), 3),
     }
+
+
+# --- 落点预告 -------------------------------------------------------------
+# 回放视角：从记录里向前看，标出接下来两次肢体移动的**实际落点**。
+#
+# 这不是预测。真正的预测需要知道线路上有哪些点、哪些属于这条线，
+# 那要岩馆线路底库，视频本身给不出。
+# 在攀爬回放这个场景里「已知未来」是成立的，但产品文案必须说清楚
+# 这是回放而不是实时指路，否则就越过了证据边界。
+
+@dataclasses.dataclass
+class Landing:
+    limb: str
+    start: int          # 该肢开始移动的帧
+    land: int           # 落点帧
+    wall_xy: tuple      # 落点在参考帧（墙面）坐标里的位置
+
+
+def landing_plan(frames, ev: list[Evidence], wall_H=None) -> list[Landing]:
+    """从接触状态序列里提取每次肢体移动的落点。"""
+    import cv2
+    n = len(ev)
+    seq = {L: [] for L in LIMBS}
+    for e in ev:
+        m = {c.limb: c.state for c in e.contacts}
+        for L in LIMBS:
+            seq[L].append(m.get(L, "uncertain"))
+
+    def to_wall(p, i):
+        if wall_H is None or wall_H[i] is None:
+            return tuple(map(float, p))
+        q = np.array(p, np.float32).reshape(1, 1, 2)
+        return tuple(map(float, cv2.perspectiveTransform(
+            q, np.linalg.inv(wall_H[i])).reshape(2)))
+
+    out = []
+    for L in LIMBS:
+        s, i = seq[L], 0
+        while i < n:
+            if s[i] == "contact":
+                j = i
+                while j < n and s[j] == "contact":
+                    j += 1
+                k = j
+                while k < n and s[k] != "contact":
+                    k += 1
+                if j < n and k < n and (k - j) >= 3:
+                    f = frames[k]
+                    p = f.pt(LIMB_POINTS[L]) if f.ok else None
+                    if p:
+                        out.append(Landing(L, j, k, to_wall(p, k)))
+                i = k if k > i else i + 1
+            else:
+                i += 1
+    out.sort(key=lambda x: x.land)
+    return out
+
+
+def next_landings(plan: list[Landing], i: int, k: int = 2) -> list[Landing]:
+    """帧 i 时刻，接下来 k 个尚未发生的落点。"""
+    return [p for p in plan if p.land > i][:k]
