@@ -154,7 +154,26 @@ def from_rise(r, units) -> Card | None:
                 _task(units, "FAULT-PULL-FIRST-011"), ["FAULT-PULL-FIRST-011"])
 
 
-def build(stalls, drives, rises=None) -> list[Card]:
+def from_bent_adjust(b, units) -> Card | None:
+    """换脚时两臂都弯着 → 卡片。可测的手臂里有直臂就不提示。"""
+    if b.any_straight:
+        return None
+    foot = {"LF": "左脚", "RF": "右脚"}.get(b.foot, "脚")
+    shown = [f"{'左' if k == 'L' else '右'}肘 {v:.0f}°"
+             for k, v in b.elbow_med.items() if v is not None]
+    why = [f"换{foot}这 {b.t1 - b.t0:.1f} 秒里，{'、'.join(shown)}——"
+           f"新点已经抓住、脚还没换完，人是用手臂挂在那儿的",
+           "屈臂悬挂要靠肱二头肌持续用力，是前臂发泵的主要来源；"
+           "同样这一秒，直臂能把重量交给骨架和脚"]
+    if b.measurable < 2:
+        why.append("（另一条手臂朝向镜头，这个机位测不到它的角度）")
+    return Card(b.t0, b.t1 + 0.4, f"换{foot}的时候手臂弯着",
+                f"{b.t0:.1f}–{b.t1:.1f}s · 过渡段",
+                why, _hints(units, "FAULT-PULL-FIRST-011", 2)[-1:],
+                _task(units, "FAULT-PULL-FIRST-011"), ["FAULT-PULL-FIRST-011"])
+
+
+def build(stalls, drives, rises=None, bents=None) -> list[Card]:
     """卡片来源优先级：停滞 > 重心上升 > 膝角发力。
 
     重心上升排在膝角发力之前，因为它不依赖膝角——
@@ -170,6 +189,10 @@ def build(stalls, drives, rises=None) -> list[Card]:
     for d in drives:
         c = from_drive(d, units)
         if c and not any(abs(c.t0 - x.t0) < 1.0 for x in cards):
+            cards.append(c)
+    for b in (bents or []):
+        c = from_bent_adjust(b, units)
+        if c and not any(abs(c.t0 - x.t0) < 0.8 for x in cards):
             cards.append(c)
     cards.sort(key=lambda c: c.t0)
     return cards

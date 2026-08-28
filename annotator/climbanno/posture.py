@@ -136,3 +136,73 @@ def summarise(ps: list[Posture]) -> dict:
     return {"状态占比": {STATE_CN[k]: f"{v/len(ok)*100:.0f}%"
                         for k, v in c.most_common()},
             "朝向比中位": round(float(np.median([p.orient for p in ok])), 2)}
+
+
+# --- 调脚时的手臂状态 -----------------------------------------------------
+# 发力本身做对了，不代表整个动作都省力。
+# **换手换脚的过渡段常常是屈臂时间最长的地方**——新点已经抓住、脚还没换完，
+# 人就挂在那里，用肱二头肌把自己拴住。
+#
+# 实测一次成功的高脚发力：上升期右肘中位 172°（几乎伸直，很好），
+# 但上升结束后的换脚段降到 108°——代价全在这一秒里。
+#
+# 对应 FAULT-PULL-FIRST-011 的观察项「调整脚点期间，是否至少保留一条接近伸直的手臂」。
+
+ADJUST_MIN_S = 0.35       # 调脚段至少持续多久。0.4 秒的换脚是常见窗口，
+                          # 阈值设到 0.5 会把它们全部漏掉
+STRAIGHT = 165.0          # 肘角大于此值算「接近伸直」
+
+
+@dataclasses.dataclass
+class BentAdjust:
+    t0: float
+    t1: float
+    foot: str                 # 正在换的脚
+    elbow_med: dict           # {"L": 角度或 None, "R": ...}，None=该机位测不准
+    any_straight: bool        # 可测的手臂里有没有一条接近伸直
+    measurable: int           # 有几条手臂可测
+
+
+def detect_bent_adjust(frames, contacts, fps: float,
+                       reliable=None, elbow_ok=None) -> list[BentAdjust]:
+    """找「换脚时两臂都弯着」的时段。
+
+    elbow_ok: {"L": 掩码, "R": 掩码}，来自 pose.joint_reliability。
+    只在该肘角可信的帧上统计——手臂朝向镜头时角度是伪影，
+    拿伪影下结论比不下结论更糟。
+    """
+    n = len(frames)
+    xy = np.stack([f.xy if f.ok else np.full((33, 2), np.nan) for f in frames])
+    eL = _angle(xy[:, L_SHO], xy[:, L_ELB], xy[:, L_WRI])
+    eR = _angle(xy[:, R_SHO], xy[:, R_ELB], xy[:, R_WRI])
+    ok = np.ones(n, bool) if reliable is None else np.asarray(reliable, bool)
+    eok = elbow_ok or {"L": np.ones(n, bool), "R": np.ones(n, bool)}
+
+    out = []
+    for foot in ("LF", "RF"):
+        moving = np.array([contacts[foot][i] != "contact" for i in range(n)]) & ok
+        i = 0
+        while i < n:
+            if not moving[i]:
+                i += 1
+                continue
+            j = i
+            while j < n and moving[j]:
+                j += 1
+            if (j - i) / fps >= ADJUST_MIN_S:
+                med, straight, cnt = {}, False, 0
+                for side, arr in (("L", eL), ("R", eR)):
+                    m = eok[side][i:j]
+                    if m.sum() >= max(3, 0.3 * (j - i)):
+                        v = float(np.median(arr[i:j][m]))
+                        med[side] = v
+                        cnt += 1
+                        if v >= STRAIGHT:
+                            straight = True
+                    else:
+                        med[side] = None
+                if cnt:
+                    out.append(BentAdjust(i / fps, j / fps, foot, med, straight, cnt))
+            i = j
+    out.sort(key=lambda x: x.t0)
+    return out

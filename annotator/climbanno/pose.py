@@ -318,3 +318,57 @@ def reliable_windows(rel: np.ndarray, fps: float, min_s: float = 0.4):
             out.append((i / fps, j / fps))
         i = j
     return out
+
+
+# --- 关节角度可信度 -------------------------------------------------------
+# reliability() 判的是「整体姿态是否可信」，但还有一层更细的问题：
+# **某个具体关节的角度是否可信**。
+#
+# 二维投影下，一段肢体指向镜头时会被压缩，该关节的角度随之失去意义。
+# 只用「投影长度低于自身中位」来判会漏——如果这段肢体在整段视频里
+# 大部分时间都朝向镜头，它自身的中位数本来就是压缩值。
+# 实测左前臂投影中位 0.16、右前臂 0.31，自身中位法只标出 9% 的帧，
+# 而实际上左肘角度全程不可用（中位报 37°，是伪影）。
+#
+# 所以用两条互补的约束：
+#   1. **左右对称**：同名肢段的真实三维长度相等，投影长度比偏离 1 太多，
+#      短的那侧就是被压缩了
+#   2. **近远端比例**：前臂与上臂、小腿与大腿的真实长度接近，比例过小同样说明压缩
+
+JOINT_SEG = {          # 关节 -> (近端段, 远端段, 对侧关节)
+    "L_ELBOW": ((11, 13), (13, 15), "R_ELBOW"),
+    "R_ELBOW": ((12, 14), (14, 16), "L_ELBOW"),
+    "L_KNEE": ((23, 25), (25, 27), "R_KNEE"),
+    "R_KNEE": ((24, 26), (26, 28), "L_KNEE"),
+}
+SYM_MIN = 0.65         # 左右投影长度比下限
+PROP_MIN = 0.55        # 远端段/近端段 投影比下限
+
+
+def joint_reliability(frames: list[Frame], joint: str) -> np.ndarray:
+    """某个关节的角度是否可信（True=可信）。"""
+    n = len(frames)
+    xy = np.stack([f.xy if f.ok else np.full((33, 2), np.nan) for f in frames])
+    ok = np.array([f.ok for f in frames])
+    prox, dist, mirror = JOINT_SEG[joint]
+
+    def L(seg):
+        return np.linalg.norm(xy[:, seg[0]] - xy[:, seg[1]], axis=1)
+
+    p, d = L(prox), L(dist)
+    mp, md = JOINT_SEG[mirror][0], JOINT_SEG[mirror][1]
+    p2, d2 = L(mp), L(md)
+
+    with np.errstate(invalid="ignore", divide="ignore"):
+        sym_p = np.minimum(p, p2) / np.maximum(p, p2)
+        sym_d = np.minimum(d, d2) / np.maximum(d, d2)
+        prop = d / np.maximum(p, 1e-6)
+        # 只在本侧更短时才归咎于本侧
+        mine_short_p = p <= p2
+        mine_short_d = d <= d2
+
+    bad = (~ok)
+    bad |= (sym_p < SYM_MIN) & mine_short_p
+    bad |= (sym_d < SYM_MIN) & mine_short_d
+    bad |= prop < PROP_MIN
+    return ~np.nan_to_num(bad, nan=True).astype(bool)

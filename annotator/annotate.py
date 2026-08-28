@@ -132,10 +132,14 @@ def main():
     kp_com = np.array([f.com if f.com else (np.nan, np.nan) for f in pframes])
     ct_seq = {L: [next((c.state for c in e.contacts if c.limb == L), "uncertain")
                   for e in ev] for L in CT.LIMBS}
+    ct_seq0 = ct_seq
+    elbow_ok = {s: P.joint_reliability(pframes, f"{s}_ELBOW") for s in ("L", "R")}
+    bents = PT.detect_bent_adjust(pframes, ct_seq0, fps,
+                                  reliable=rel, elbow_ok=elbow_ok)
     drives = DV.detect(kp_xy, kp_com, ct_seq, fps, wall_H=Hs, reliable=rel)
     stalls = DV.detect_stalls(kp_xy, kp_com, ct_seq, fps, wall_H=Hs, reliable=rel)
     rises = DV.detect_rises(kp_xy, kp_com, ct_seq, fps, wall_H=Hs, reliable=rel)
-    cards = [c for c in CO.build(stalls, drives, rises)
+    cards = [c for c in CO.build(stalls, drives, rises, bents)
              if float(rel[int(c.t0 * fps):max(int(c.t1 * fps), int(c.t0 * fps) + 1)]
                       .mean()) >= 0.6]      # 卡片不落在不可信区间上
     print(f"[5/6] 姿态状态  " + "  ".join(
