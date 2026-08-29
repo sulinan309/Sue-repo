@@ -20,11 +20,60 @@ from __future__ import annotations
 import argparse
 import json
 import pathlib
+import sys
 from datetime import date
 
 
 def rd(p):
     return json.loads(pathlib.Path(p).read_text(encoding="utf-8"))
+
+
+# --- 陈旧输出目录：写知识库之前必须拦住（qa/缺陷清单.md D-001）--------------
+# 分界线：**会写进知识库的路径硬失败，只出图的路径告警。**
+# 本文件的两条路径（草拟新单元 / --update-measured）都直接写 kb/cases/*.md，
+# 所以两条都走 _fresh_gate。compare.py / card.py 不走，它们只出图。
+
+STALE_KEY = "source_stale"
+
+
+def _fresh_gate(outdir, allow_stale, why):
+    """返回本次写入所依据的目录缺了哪些当前管线字段（空列表 = 新鲜）。
+
+    `allow_stale=False`（默认）→ 陈旧目录直接 SystemExit，什么都不写。
+    `allow_stale=True` → 放行，但**必须**把缺失字段写进产物（见 _mark_versions）。
+    """
+    from climbanno import anchor
+
+    if not allow_stale:
+        return anchor.require_fresh(outdir, why)
+    miss = anchor.check_fresh(outdir)
+    if miss:
+        print(f"[放行] --allow-stale：{outdir} 缺 {'、'.join(miss)}，"
+              f"本次写入会在案例的 versions.{STALE_KEY} 里留痕。", file=sys.stderr)
+    return miss
+
+
+def _mark_versions(lines, miss):
+    """在 versions 块里记下「这批数字来自陈旧目录」。
+
+    放行而不留痕，等于把 D-001 原样搬到 --allow-stale 后面：
+    数字照样进知识库，事后照样看不出是哪一版跑的。
+    目录是新鲜的就把旧痕迹摘掉——痕迹描述的是 measured 的来源，
+    measured 刚被新目录重算过，痕迹就不再成立。
+    """
+    out, done = [], False
+    for ln in lines:
+        if ln.startswith(" ") and ln.strip().startswith(f"{STALE_KEY}:"):
+            continue                    # 旧痕迹先摘掉，按本次结果重写
+        out.append(ln)
+        if ln.rstrip() == "versions:" and miss and not done:
+            out.append(f"  {STALE_KEY}: {json.dumps(miss, ensure_ascii=False)}"
+                       f"    # --allow-stale 放行：源目录缺当前管线字段")
+            done = True
+    if miss and not done:
+        raise SystemExit("案例文件里没有 versions 块，放行的痕迹无处可留——"
+                         "不写，比写一个看不出来源的数字好")
+    return out
 
 
 def ystr(v):
@@ -141,12 +190,17 @@ def emit_measured(measured, ind="  "):
     return out
 
 
-def update_measured(case_path: pathlib.Path, outdir: pathlib.Path, video: str):
+def update_measured(case_path: pathlib.Path, outdir: pathlib.Path, video: str,
+                    allow_stale: bool = False):
     """就地替换已有案例单元的 measured 块，正文和人工字段一概不动。
 
     重算而不是重新草拟：叙述、expert_notes、审核状态都是人写的，
     重新生成会把它们抹掉。
+
+    第一件事是查源目录新不新鲜：这条路径把数字直接写进知识库，
+    陈旧目录必须在读到任何数之前就中断（D-001）。
     """
+    miss = _fresh_gate(outdir, allow_stale, "重算 measured 块")
     txt = case_path.read_text(encoding="utf-8")
     lines = txt.split("\n")
     try:
@@ -163,6 +217,7 @@ def update_measured(case_path: pathlib.Path, outdir: pathlib.Path, video: str):
     old = collect(outdir)[0]
     old.update(anchor_measures(outdir, video))
     new = lines[:a] + ["measured:"] + emit_measured(old) + lines[b:]
+    new = _mark_versions(new, miss)
     case_path.write_text("\n".join(new), encoding="utf-8")
     return len(old)
 
@@ -181,13 +236,17 @@ def main():
     ap.add_argument("--update-measured", metavar="案例文件",
                     help="只重算已有单元的 measured 块，正文不动")
     ap.add_argument("--anchor-video", help="锚点口径需要读原视频")
+    ap.add_argument("--allow-stale", action="store_true",
+                    help="放行陈旧输出目录（缺当前管线字段）。"
+                         "唯一的逃生口，放行会写进案例的 versions 块")
     a = ap.parse_args()
 
     if a.update_measured:
         if not a.anchor_video:
             raise SystemExit("--update-measured 需要 --anchor-video")
         p = pathlib.Path(a.update_measured)
-        n = update_measured(p, pathlib.Path(a.outdir), a.anchor_video)
+        n = update_measured(p, pathlib.Path(a.outdir), a.anchor_video,
+                            allow_stale=a.allow_stale)
         print(f"已更新 {p.name} 的 measured 块：{n} 项")
         return
 
@@ -196,6 +255,8 @@ def main():
     if missing:
         raise SystemExit("草拟新单元需要 " + "、".join(missing))
     outdir = pathlib.Path(a.outdir)
+    # 草拟新单元同样是往 kb/cases/ 里写数字，和 --update-measured 一样要过这道门。
+    miss = _fresh_gate(outdir, a.allow_stale, "草拟新案例单元")
     measured, facts, knowledge, hints, s = collect(outdir)
     src = s.get("source", {})
 
@@ -280,6 +341,7 @@ def main():
         "如果它推翻了什么，写清楚——知识库需要能记录「建议无效」。）",
         "",
     ]
+    lines = _mark_versions(lines, miss)
     dst = pathlib.Path(a.out) / f"{a.id}.md"
     dst.parent.mkdir(parents=True, exist_ok=True)
     dst.write_text("\n".join(lines), encoding="utf-8")

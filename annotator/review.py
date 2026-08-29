@@ -92,6 +92,7 @@ L_SHO, R_SHO, L_ELB, R_ELB, L_WRI, R_WRI = 11, 12, 13, 14, 15, 16
 L_HIP, R_HIP, L_FOOT, R_FOOT = 23, 24, 31, 32
 ELBOW_BENT = 160.0       # 肘角小于此值算「明显弯曲」
 STANCE_WIDE = 1.0        # 两脚水平间距 / 躯干长，大于此值算「宽站姿」
+SEG_MIN_S = 0.5          # 一段短于这个时长就不给百分比，见 _seg_pct 的注释
 
 
 def _angle(a, b, c):
@@ -101,11 +102,44 @@ def _angle(a, b, c):
     return np.degrees(np.arccos(np.clip(cos, -1, 1)))
 
 
+def _seg_pct(vals, valid, min_n):
+    """段内占比（%）。可用样本不足就返回 `None` ＝ **该项不可用**。
+
+    绝不返回 0。「双肘同时弯曲 0%」和「这一段根本没法算」在下游长得一模一样，
+    而后者不该进任何结论——把空段填成 0 只是把硬崩溃换成静默错误。
+
+    两种不可用一起挡住：
+      * **0 帧**：髋部最高点落在末帧时下攀段就是空的。`np.nanmean(空)` 得 NaN，
+        `round(float(nan))` 直接抛 ValueError（qa/缺陷清单.md D-007）。
+      * **几乎空**：n 帧算出来的百分比分辨率只有 100/n。out7 最后 5 帧的髋高
+        只差 3.1px（0.017 倍躯干长），谁是最高点由噪声决定；峰值往前挪一帧，
+        下攀段就从 0 帧变成 1 帧，**不崩了，改成报一个 0% 或 100%**。
+        那比崩更糟，所以两种情况走同一条路。
+    """
+    if int(np.count_nonzero(valid)) < min_n:
+        return None
+    v = float(np.nanmean(vals))
+    return None if not np.isfinite(v) else round(v * 100)
+
+
+def _seg_med(vals, valid, min_n):
+    """段内中位数，口径同 `_seg_pct`：样本不足返回 None，不返回 0。"""
+    if int(np.count_nonzero(valid)) < min_n:
+        return None
+    v = float(np.nanmedian(vals))
+    return None if not np.isfinite(v) else round(v, 2)
+
+
 def posture(npz_path):
     """从关键点算姿态几何指标，并按上攀/下攀分段。
 
     归一化基准用**躯干长**而不是肩宽：侧身时肩线在二维投影里会大幅缩短，
     用肩宽做分母会把比值抬高，得到虚高的「宽站姿」占比。
+
+    **分段可能分出一个空段，而且这不是边角情况。** 剪到动作完成为止的片段，
+    最后一帧往往就是全片最高处（out7：peak=94 / n=95）。分段本身是对的，
+    不为了不崩就把它去掉；空段的指标一律给 `None`（不可用），由调用方明说。
+    每段附带 `帧数` / `不可用项` / `不可用原因`，让「为什么没有数」也是可核对的。
     """
     d = np.load(npz_path)
     xy, com, hip = d["xy"], d["com"], d["hip"]
@@ -124,19 +158,45 @@ def posture(npz_path):
     inside = ((com[:, 0] >= np.nanmin(fx, axis=0)) &
               (com[:, 0] <= np.nanmax(fx, axis=0)))
 
+    # 每个量各自的可用帧：关键点缺失时 `_angle` 出 NaN，比较运算会静静给出
+    # False。所以「有几帧真的量到了」必须单独数，不能拿段长当样本量。
+    val_arm = np.isfinite(eL) & np.isfinite(eR)
+    val_st = np.isfinite(stance)
+    val_in = np.isfinite(com[:, 0]) & np.isfinite(fx).any(axis=0)
+
     peak = int(np.nanargmin(hip[:, 1]))       # 髋部图像 y 最小 = 最高点
     segs = {"上攀": slice(0, peak + 1), "下攀": slice(peak + 1, n)}
+    min_n = max(1, int(round(SEG_MIN_S * fps)))
+
+    def seg(sl):
+        k = int(sl.stop - sl.start)
+        v = {
+            "帧数": k,
+            "时长s": round(k / fps, 1),
+            "双肘同时弯曲": _seg_pct(both_bent[sl], val_arm[sl], min_n),
+            "至少一条直臂": _seg_pct(one_straight[sl], val_arm[sl], min_n),
+            "宽站姿": _seg_pct(stance[sl] > STANCE_WIDE, val_st[sl], min_n),
+            "站姿宽度中位": _seg_med(stance[sl], val_st[sl], min_n),
+            "重心在两脚水平范围内": _seg_pct(inside[sl], val_in[sl], min_n),
+        }
+        bad = [kk for kk, vv in v.items()
+               if vv is None and kk not in ("帧数", "时长s")]
+        if not bad:
+            why = None
+        elif k == 0:
+            why = "长度为 0 帧，髋部最高点就是最后一帧"
+        elif k < min_n:
+            why = (f"只有 {k} 帧 / {k / fps:.2f}s，不足 {SEG_MIN_S}s"
+                   f"（{min_n} 帧）；{k} 帧算出的百分比分辨率只有 {100 / k:.0f}%")
+        else:
+            why = f"有 {k} 帧，但量到的帧不足 {min_n} 帧（关键点缺失）"
+        v["不可用项"], v["不可用原因"] = bad, why
+        return v
+
     return {
         "fps": fps, "n": n, "peak_frame": peak, "peak_t": peak / fps,
-        "segments": {
-            name: {
-                "时长s": round((sl.stop - sl.start) / fps, 1),
-                "双肘同时弯曲": round(float(np.nanmean(both_bent[sl])) * 100),
-                "至少一条直臂": round(float(np.nanmean(one_straight[sl])) * 100),
-                "宽站姿": round(float(np.nanmean(stance[sl] > STANCE_WIDE)) * 100),
-                "站姿宽度中位": round(float(np.nanmedian(stance[sl])), 2),
-                "重心在两脚水平范围内": round(float(np.nanmean(inside[sl])) * 100),
-            } for name, sl in segs.items()},
+        "peak_at_end": peak == n - 1, "min_frames": min_n,
+        "segments": {name: seg(sl) for name, sl in segs.items()},
     }
 
 
@@ -215,12 +275,21 @@ def main():
         print("─" * 66)
         keys = ["时长s", "双肘同时弯曲", "至少一条直臂", "宽站姿",
                 "站姿宽度中位", "重心在两脚水平范围内"]
+
+        def cell(k, val):
+            if val is None:
+                return "不可用"      # 不填 0：没有观测 ≠ 观测到 0
+            return str(val) + ("%" if k not in ("时长s", "站姿宽度中位") else "")
+
         print(f"  {'':6s}" + "".join(f"{k:>14s}" for k in keys))
         for name, v in ps["segments"].items():
-            row = "".join(
-                f"{str(v[k]) + ('%' if k not in ('时长s', '站姿宽度中位') else ''):>14s}"
-                for k in keys)
+            row = "".join(f"{cell(k, v[k]):>14s}" for k in keys)
             print(f"  {name:6s}{row}")
+        for name, v in ps["segments"].items():
+            if v["不可用原因"]:
+                print(f"\n  没有可用的{name}段：{v['不可用原因']}。")
+                print(f"  该段 {len(v['不可用项'])} 项姿态几何指标记为不可用，"
+                      f"**不是 0%**——0% 会被当成一次真实观测。")
         print(f"\n  阈值：肘角 < {ELBOW_BENT:.0f}° 算弯曲；"
               f"两脚水平间距 > {STANCE_WIDE} 倍躯干长算宽站姿")
         print("  归一化用躯干长而非肩宽——侧身时肩线在二维投影里会坍缩，"

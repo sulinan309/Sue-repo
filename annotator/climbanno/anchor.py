@@ -42,23 +42,55 @@ FRESH_KEYS = ("pose_reliable_rate", "analyzable_windows")
 
 
 def check_fresh(outdir):
-    """旧目录会安静地给出不一样的数字——必须吵出来。
+    """旧目录会安静地给出不一样的数字——必须吵出来，而且要**能被程序读到**。
 
     out5 和 out6 是同一段视频的两次运行，关键点最大差 98px。用错了目录，
     +2.0s 的高度变化是 -0.50 还是 -0.38，全看你打了哪个数字，而且不报错。
+
+    **返回缺失字段列表；空列表 = 这个目录是当前管线跑的。**
+    在这之前它只 print 到 stderr、返回 None（qa/缺陷清单.md D-001）：
+    调用方既不能 `if stale:` 也 catch 不到，`2>/dev/null` 或 notebook 里跑
+    直接把这条防线整个吞掉。告警照旧发（有人在看终端时它仍然有用），
+    但「要不要相信这个目录」现在是一个程序能判断的值。
+
+    注意：`summary.json` 不存在时返回 `[]` 且一个字都不说——那是 D-002，
+    本轮没动。**别把这个 `[]` 当成「目录新鲜」**：它只表示「没查到缺字段」。
     """
     p = pathlib.Path(outdir) / "summary.json"
     if not p.exists():
-        return
+        return []
     s = json.loads(p.read_text(encoding="utf-8"))
     miss = [k for k in FRESH_KEYS if s.get(k) is None]
     if miss:
         print(f"[警告] {outdir}/summary.json 缺少 {'、'.join(miss)}——"
               f"这是旧版管线的输出，数字与当前管线不一致。请重跑 annotate.py。",
               file=sys.stderr)
+    return miss
+
+
+def require_fresh(outdir, why):
+    """**会写进知识库的路径上用这个**：陈旧目录直接中断，不给「喊一声照常放行」。
+
+    分界线（qa/缺陷清单.md D-001）：**会写进知识库的路径硬失败，只出图的路径告警。**
+    渲染错一张卡片，重跑就是；写进 `kb/cases/*.md` 的数字会被后面所有分析引用，
+    而且看不出它是哪一版跑的。所以 `compare.py` / `card.py` 仍然只走 check_fresh，
+    `make_case.py` 走这里。
+
+    `why` 说明「接下来要干什么」，直接进中止信息——中止信息要能一眼看出
+    停下来的是哪一步。
+    """
+    miss = check_fresh(outdir)
+    if miss:
+        raise SystemExit(
+            f"[中止] {outdir} 是旧版管线的输出（缺 {'、'.join(miss)}），"
+            f"{why}会把旧版数字写进知识库，而且事后从版本里看不出来。\n"
+            f"        请先重跑 annotate.py；确实要用旧目录就显式加 "
+            f"--allow-stale（放行会写进案例的 versions 块）。")
+    return miss
 
 
 def load(outdir, video, foot=R_ANK, limb="RF"):
+    # 探索性路径：只告警不中断（D-001 的分界线）。硬失败见 require_fresh()。
     check_fresh(outdir)
     d = np.load(pathlib.Path(outdir) / "keypoints.npz")
     xy, com = d["xy"], d["com"]
